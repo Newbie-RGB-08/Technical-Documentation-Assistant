@@ -1,0 +1,48 @@
+# LLM 模型路由配置（PRD 3.4.3）
+# 按任务类型配置优先级链：链上靠前的不可用时自动降级到下一个
+providers:
+  ollama:
+    type: ollama
+    host: ${OLLAMA_HOST:http://localhost:11434}
+    models:
+      chat: qwen2.5:7b
+      rewrite: qwen2.5:3b
+  deepseek:
+    type: openai_compatible
+    base_url: https://api.deepseek.com
+    api_key: ${DEEPSEEK_API_KEY}
+    models:
+      chat: ${DEEPSEEK_CHAT_MODEL:deepseek-chat}
+  qwen:
+    type: openai_compatible
+    base_url: ${QWEN_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+    api_key: ${QWEN_API_KEY}
+    models:
+      chat: ${QWEN_CHAT_MODEL:qwen-plus}
+  openai:
+    type: openai_compatible
+    base_url: https://api.openai.com/v1
+    api_key: ${OPENAI_API_KEY}
+    models:
+      chat: ${OPENAI_CHAT_MODEL:gpt-4o}
+
+routing:
+  generate:            # 答案生成任务
+    - provider: ollama
+      model: qwen2.5:7b
+    - provider: deepseek
+      model: ${DEEPSEEK_CHAT_MODEL:deepseek-chat}
+    - provider: openai
+      model: ${OPENAI_CHAT_MODEL:gpt-4o}
+
+  rewrite:             # 问题改写任务（轻量）
+    - provider: ollama
+      model: qwen2.5:3b
+    - provider: deepseek
+      model: ${DEEPSEEK_CHAT_MODEL:deepseek-chat}
+
+  embedding:
+    - provider: local_bge
+
+  rerank:
+    - provider: local_reranker

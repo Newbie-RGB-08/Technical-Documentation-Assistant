@@ -1,0 +1,38 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Env & secrets
+backend/.env
+backend/.env.local
+
+# Local runtime data
+backend/data/chroma_db/
+backend/data/sessions.db
+backend/data/tech_docs/
+backend/data/domain_terms.json
+
+# Node
+node_modules/
+frontend/dist/
+.npm-cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs & temp
+*.log
+backend/scripts/_tmp_*.py
