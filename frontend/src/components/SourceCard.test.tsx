@@ -126,3 +126,168 @@ describe("SourceCard 点击行为", () => {
     expect(openSpy).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("SourceCard 合并展示（V1.2）", () => {
+  const MERGED: SourceItem = {
+    index: 3,
+    indices: [3, 4, 7, 9],
+    chunk_count: 4,
+    title: "3. Python 演示 — Python 3.15.0 文档",
+    file_path: "D:/docs/python-3.15.0-tutorial/introduction.html",
+    heading_path: "3.1 基础",
+    headings: ["3.1 基础", "3.2 流程", "3.4 进阶", "3.5 案例"],
+    source_type: "tech_doc",
+    source_url: "https://docs.python.org/zh-cn/3.15/tutorial/introduction.html",
+    excerpt: "第一段摘要",
+    excerpts: ["第一段摘要", "第二段摘要", "第三段摘要"],
+    score: 0.094,
+  };
+
+  let openSpy: any;
+  let fetchSpy: any;
+
+  beforeEach(() => {
+    openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(() => Promise.resolve(new Response("{}")));
+  });
+
+  afterEach(() => {
+    openSpy.mockRestore();
+    fetchSpy.mockRestore();
+  });
+
+  it("展示「共 N 段」徽章，且不再渲染章节列表（V1.3）", () => {
+    render(<SourceCard source={MERGED} />);
+    expect(screen.getByText("共 4 段")).toBeInTheDocument();
+    // V1.3：章节列表已移除，章节文本不应作为可见文本出现
+    for (const heading of MERGED.headings!) {
+      expect(screen.queryByText(heading)).not.toBeInTheDocument();
+    }
+  });
+
+  it("不渲染完整本地路径，仅显示文件名（V1.3）", () => {
+    render(<SourceCard source={MERGED} />);
+    // 完整路径不应出现在 DOM 文本中
+    expect(screen.queryByText(MERGED.file_path)).not.toBeInTheDocument();
+    // 仅显示文件名
+    expect(screen.getByText("introduction.html")).toBeInTheDocument();
+  });
+
+  it("不渲染网页 URL 明文（V1.3）", () => {
+    render(<SourceCard source={MERGED} />);
+    expect(screen.queryByText(/https?:\/\//)).not.toBeInTheDocument();
+  });
+
+  it("摘要默认折叠 2 条，可展开剩余 1 段", () => {
+    render(<SourceCard source={MERGED} />);
+    expect(screen.getByText("第一段摘要")).toBeInTheDocument();
+    expect(screen.getByText("第二段摘要")).toBeInTheDocument();
+    expect(screen.queryByText("第三段摘要")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "展开剩余 1 段" }));
+    expect(screen.getByText("第三段摘要")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "收起" })).toBeInTheDocument();
+  });
+
+  it("展开/收起只切换摘要，不触发跳转", () => {
+    render(<SourceCard source={MERGED} />);
+    fireEvent.click(screen.getByRole("button", { name: "展开剩余 1 段" }));
+    fireEvent.click(screen.getByRole("button", { name: "收起" }));
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("合并卡片仍保留 V1.1 的网页跳转行为", () => {
+    render(<SourceCard source={MERGED} />);
+    const card = screen
+      .getByText("3. Python 演示 — Python 3.15.0 文档")
+      .closest(".source-card") as HTMLElement;
+    fireEvent.click(card);
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://docs.python.org/zh-cn/3.15/tutorial/introduction.html",
+      "_blank",
+      "noopener,noreferrer"
+    );
+  });
+
+  it("单片段不显示徽章与摘要展开按钮，且不渲染章节（V1.3）", () => {
+    render(<SourceCard source={LOCAL_SOURCE} />);
+    expect(screen.queryByText(/共 \d+ 段/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /展开剩余/ })).not.toBeInTheDocument();
+    // V1.3：章节不再渲染
+    expect(screen.queryByText(/章节：/)).not.toBeInTheDocument();
+  });
+});
+
+describe("SourceCard hybrid 双入口（V1.3）", () => {
+  const HYBRID: SourceItem = {
+    index: 1,
+    indices: [1, 2],
+    chunk_count: 2,
+    title: "ChromaDB 使用要点",
+    file_path: "D:/docs/notes/chromadb_usage.md",
+    source_type: "personal_note",
+    source_url: "https://docs.trychroma.com/getting-started",
+    is_hybrid: true,
+    excerpt: "本地摘要",
+    excerpts: ["本地摘要", "网页摘要"],
+    score: 0.95,
+  };
+
+  let openSpy: any;
+  let fetchSpy: any;
+
+  beforeEach(() => {
+    openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(() => Promise.resolve(new Response("{}")));
+  });
+
+  afterEach(() => {
+    openSpy.mockRestore();
+    fetchSpy.mockRestore();
+  });
+
+  it("渲染「本地打开」与「网页原文」两个按钮", () => {
+    render(<SourceCard source={HYBRID} />);
+    expect(screen.getByRole("button", { name: "📄 本地打开" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "↗ 网页原文" })).toBeInTheDocument();
+  });
+
+  it("点击「本地打开」调用 /api/files/open，不打开网页", () => {
+    render(<SourceCard source={HYBRID} />);
+    fireEvent.click(screen.getByRole("button", { name: "📄 本地打开" }));
+    expect(fetchSpy).toHaveBeenCalledWith(
+      `/api/files/open?path=${encodeURIComponent(HYBRID.file_path)}`
+    );
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+
+  it("点击「网页原文」调用 window.open，不调本地接口", () => {
+    render(<SourceCard source={HYBRID} />);
+    fireEvent.click(screen.getByRole("button", { name: "↗ 网页原文" }));
+    expect(openSpy).toHaveBeenCalledWith(
+      HYBRID.source_url,
+      "_blank",
+      "noopener,noreferrer"
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("hybrid 卡片整体点击不触发跳转（避免与显式按钮歧义）", () => {
+    render(<SourceCard source={HYBRID} />);
+    const card = screen.getByText("ChromaDB 使用要点").closest(".source-card") as HTMLElement;
+    fireEvent.click(card);
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("不暴露完整路径与 URL 明文", () => {
+    render(<SourceCard source={HYBRID} />);
+    expect(screen.queryByText(HYBRID.file_path)).not.toBeInTheDocument();
+    expect(screen.queryByText(/https?:\/\//)).not.toBeInTheDocument();
+  });
+});

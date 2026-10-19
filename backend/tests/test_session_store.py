@@ -17,6 +17,31 @@ def test_messages_roundtrip(tmp_path):
     assert len(limited) == 1 and limited[0]["role"] == "assistant"
 
 
+def test_merged_sources_roundtrip(tmp_path):
+    """V1.2：合并卡片的嵌套结构（indices/headings/excerpts）必须可无损往返。"""
+    store = SessionStore(tmp_path / "s.db")
+    merged = [
+        {
+            "index": 1,
+            "indices": [1, 3, 5],
+            "chunk_count": 3,
+            "title": "3. Python 演示 — Python 3.15.0 文档",
+            "file_path": r"D:\docs\python-3.15.0-tutorial\introduction.html",
+            "heading_path": "/ 3. Python 演示 / 3.1 基础",
+            "headings": ["/ 3. Python 演示 / 3.1 基础", "/ 3. Python 演示 / 3.2 流程"],
+            "source_type": "tech_doc",
+            "source_url": "https://docs.python.org/zh-cn/3.15/tutorial/introduction.html",
+            "excerpt": "第一段摘要",
+            "excerpts": ["第一段摘要", "第二段摘要", "第三段摘要"],
+            "score": 0.094,
+        }
+    ]
+    store.add_message("s1", "assistant", "回答正文 [来源1]", sources=merged)
+
+    history = store.get_history("s1")
+    assert history[0]["sources"] == merged
+
+
 def test_score_log_and_recent_questions(tmp_path):
     store = SessionStore(tmp_path / "s.db")
     store.add_score_log("s1", "ChromaDB 怎么配置？", q_score=85, r_score=90, level=3, confidence=0.8, model="qwen2.5:7b")

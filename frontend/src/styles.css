@@ -376,6 +376,38 @@ select {
   font-size: 12px;
 }
 
+/* V1.3 新增：操作区（hybrid 双按钮 / 单卡片提示） */
+.source-actions {
+  margin-top: 2px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.source-action-btn {
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: #cfe4ff;
+  cursor: pointer;
+}
+
+.source-action-btn.primary {
+  background: linear-gradient(145deg, rgba(93, 140, 255, 0.42), rgba(124, 92, 255, 0.3));
+  border-color: rgba(140, 170, 255, 0.4);
+  color: #eaf2ff;
+}
+
+.source-action-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.source-action-btn.primary:hover {
+  background: linear-gradient(145deg, rgba(93, 140, 255, 0.6), rgba(124, 92, 255, 0.45));
+}
+
 .source-kind-badge {
   font-size: 11px;
   padding: 1px 8px;
@@ -394,6 +426,42 @@ select {
 .source-link-hint {
   font-size: 11px;
   color: rgba(180, 210, 255, 0.75);
+}
+
+/* V1.2 新增：合并片段数徽章 / 多章节 / 多摘要 / 展开按钮 */
+.source-chunk-badge {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: rgba(255, 214, 130, 0.16);
+  color: #ffe0a8;
+  border: 1px solid rgba(255, 214, 130, 0.32);
+}
+
+.source-headings {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  list-style: disc;
+}
+
+.source-excerpt-list {
+  display: grid;
+  gap: 2px;
+}
+
+.source-more {
+  margin-top: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: #cfe4ff;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.source-more:hover {
+  background: rgba(255, 255, 255, 0.16);
 }
 
 /* 来源卡片：hover 高亮 + 可点击 */

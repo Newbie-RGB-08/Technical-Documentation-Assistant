@@ -43,6 +43,26 @@ def test_build_sources_returns_all_new_fields():
     assert a["source_url"] == "https://example.com/chromadb"
     assert a["score"] == 0.95
     assert a["excerpt"].startswith("ChromaDB 的 PersistentClient")
+    # V1.2 新增合并字段：12 项字段集必须完整（缺字段会让前端合并/联动失效）
+    assert set(a.keys()) == {
+        "index",
+        "indices",
+        "chunk_count",
+        "title",
+        "file_path",
+        "heading_path",
+        "headings",
+        "source_type",
+        "source_url",
+        "excerpt",
+        "excerpts",
+        "score",
+    }
+    # 单片段组：indices 自洽，代表 index 即组内首个片段序号
+    assert a["indices"] == [a["index"]]
+    assert a["chunk_count"] == 1
+    assert a["headings"] == [a["heading_path"]]
+    assert a["excerpts"] == [a["excerpt"]]
 
 
 def test_build_sources_source_url_default_empty():

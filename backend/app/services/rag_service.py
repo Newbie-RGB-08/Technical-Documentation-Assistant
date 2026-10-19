@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import AsyncIterator
 
 from app.core.confidence import (
@@ -51,20 +52,172 @@ def build_context(chunks: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
+MAX_EXCERPTS = 3
+
+
+def _normalize_doc_path(path) -> str:
+    """路径归一化：剥离数据根前缀后再做分隔符/大小写归一（V1.3）。
+
+    同一份文件可能以绝对路径 D:\\...\\backend\\data\\notes\\x.md
+    或相对路径 data\\notes\\x.md 入库；若只做大小写归一，两者仍会被
+    判为不同文档。这里统一截取 data/ 之后的部分。
+    """
+    p = str(path or "").strip().replace("\\", "/")
+    idx = p.rfind("/data/")
+    if idx != -1:
+        p = p[idx + len("/data/"):]
+    elif p.startswith("data/"):
+        p = p[len("data/"):]
+    return p.strip("/").casefold()
+
+
+def _normalize_title(title) -> str:
+    """标题归一化：用于跨 source_type 判断是否同一文档（V1.3 hybrid 合并）。"""
+    return re.sub(r"[\s\u3000]+", "", str(title or "").strip()).casefold()
+
+
+def _strip_heading_lines(text: str) -> str:
+    """剥离 markdown 标题行，避免摘要首行重复章节名（V1.3）。"""
+    return "\n".join(
+        line for line in text.split("\n") if not line.lstrip().startswith("#")
+    ).strip()
+
+
+def _group_key(index: int, meta: dict) -> str:
+    """同一文档的分组键：source_type + 归一化路径。
+
+    缺 file_path 的片段用它自己的序号单独成组，避免脏元数据把无关片段误合并。
+    """
+    raw_path = str(meta.get("file_path") or "").strip()
+    if not raw_path:
+        return f"__nopath__#{index}"
+    return f"{str(meta.get('source_type') or '').strip().casefold()}|{_normalize_doc_path(raw_path)}"
+
+
+def _build_card(members: list[tuple[int, dict]], max_excerpts: int) -> dict:
+    """把一组（同文档）片段组装成一张来源卡片。"""
+    first_idx, first_chunk = members[0]
+    first_meta = first_chunk.get("metadata") or {}
+
+    # title：取组内首次出现的非空值
+    title = ""
+    for _, chunk in members:
+        candidate = str((chunk.get("metadata") or {}).get("title") or "").strip()
+        if candidate:
+            title = candidate
+            break
+
+    headings: list[str] = []
+    excerpts: list[str] = []
+    for _, chunk in members:
+        heading = str((chunk.get("metadata") or {}).get("heading_path") or "").strip()
+        if heading and heading not in headings:
+            headings.append(heading)
+        if len(excerpts) < max_excerpts:
+            excerpts.append(_strip_heading_lines(chunk["text"])[:200])
+
+    score = max(
+        float(chunk.get("rerank_score", chunk.get("score", 0.0)) or 0.0)
+        for _, chunk in members
+    )
+    rep_heading = str(first_meta.get("heading_path") or "").strip()
+
+    return {
+        "index": first_idx,
+        "indices": [idx for idx, _ in members],
+        "chunk_count": len(members),
+        "title": title,
+        "file_path": first_meta.get("file_path", "未知"),
+        "heading_path": rep_heading or (headings[0] if headings else ""),
+        "headings": headings,
+        "source_type": first_meta.get("source_type", ""),
+        "source_url": first_meta.get("source_url", ""),
+        "excerpt": excerpts[0] if excerpts else "",
+        "excerpts": excerpts,
+        "score": score,
+    }
+
+
+def merge_chunks_to_sources(chunks: list[dict], max_excerpts: int = MAX_EXCERPTS) -> list[dict]:
+    """把同一文档的多个检索片段合并为一张来源卡片（V1.2 + V1.3）。
+
+    两轮合并：
+    1. 按 (source_type, 归一化路径) 分组 —— 解决同一文件路径表示不一致导致的漏合并。
+    2. 跨 source_type 标题合并（hybrid）—— personal_note 与 tech_doc 标题相同
+       时合并为一张卡，优先本地，同时保留本地与网页两个跳转入口。
+
+    关键约束：indices 必须完整保留片段序号（1-based），因为正文里的 [来源N]
+    直接对应送进 LLM context 的片段序号；只合并展示层，不改 context 顺序与编号。
+    """
+    # 第 1 轮：按路径分组
+    groups: dict[str, list[tuple[int, dict]]] = {}
+    for i, chunk in enumerate(chunks):
+        idx = i + 1
+        meta = chunk.get("metadata") or {}
+        groups.setdefault(_group_key(idx, meta), []).append((idx, chunk))
+
+    for members in groups.values():
+        members.sort(key=lambda m: m[0])
+
+    prototypes = [_build_card(members, max_excerpts) for members in groups.values()]
+
+    # 第 2 轮：personal_note + tech_doc 同标题 → hybrid
+    tech_by_title: dict[str, dict] = {}
+    for proto in prototypes:
+        if proto["source_type"] == "tech_doc":
+            nt = _normalize_title(proto["title"])
+            if nt and nt not in tech_by_title:
+                tech_by_title[nt] = proto
+
+    consumed_tech: set[int] = set()
+    cards: list[dict] = []
+    for proto in prototypes:
+        if proto["source_type"] != "personal_note":
+            continue
+        nt = _normalize_title(proto["title"])
+        tech = tech_by_title.get(nt)
+        if tech is not None and id(tech) not in consumed_tech:
+            consumed_tech.add(id(tech))
+            all_indices = sorted(set(proto["indices"]) | set(tech["indices"]))
+            merged_excerpts = (proto["excerpts"] + tech["excerpts"])[:max_excerpts]
+            merged_headings: list[str] = []
+            for h in proto["headings"] + tech["headings"]:
+                if h not in merged_headings:
+                    merged_headings.append(h)
+            cards.append(
+                {
+                    "index": min(proto["index"], tech["index"]),
+                    "indices": all_indices,
+                    "chunk_count": proto["chunk_count"] + tech["chunk_count"],
+                    "title": proto["title"] or tech["title"],
+                    "file_path": proto["file_path"],  # 本地优先
+                    "heading_path": proto["heading_path"] or tech["heading_path"],
+                    "headings": merged_headings,
+                    "source_type": "personal_note",  # 本地优先
+                    "source_url": tech["source_url"],  # 网页 URL
+                    "is_hybrid": True,
+                    "excerpt": merged_excerpts[0] if merged_excerpts else "",
+                    "excerpts": merged_excerpts,
+                    "score": max(proto["score"], tech["score"]),
+                }
+            )
+        else:
+            cards.append(proto)
+
+    # 未被 hybrid 消耗的 tech_doc 与其他类型
+    for proto in prototypes:
+        if proto["source_type"] == "tech_doc" and id(proto) not in consumed_tech:
+            cards.append(proto)
+        elif proto["source_type"] not in ("personal_note", "tech_doc"):
+            cards.append(proto)
+
+    cards.sort(key=lambda card: (-card["score"], card["index"]))
+    return cards
+
+
 def build_sources(chunks: list[dict]) -> list[dict]:
-    return [
-        {
-            "index": i + 1,
-            "title": c.get("metadata", {}).get("title", ""),
-            "file_path": c.get("metadata", {}).get("file_path", "未知"),
-            "heading_path": c.get("metadata", {}).get("heading_path", ""),
-            "source_type": c.get("metadata", {}).get("source_type", ""),
-            "source_url": c.get("metadata", {}).get("source_url", ""),
-            "excerpt": c["text"][:200],
-            "score": float(c.get("rerank_score", c.get("score", 0.0)) or 0.0),
-        }
-        for i, c in enumerate(chunks)
-    ]
+    """按文档合并后的来源卡片列表（V1.2）。"""
+    return merge_chunks_to_sources(chunks)
 
 
 async def chat_flow(

@@ -8,9 +8,10 @@ import type { ChatMessage } from "../types/chat";
 function renderMarkdown(content: string): string {
   const raw = marked.parse(content, { async: false }) as string;
   const clean = DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
+  // 同时识别 [N] 与模型按提示词输出的 [来源N] / [来源 N]（保留原文作为按钮文案）
   return clean.replace(
-    /\[(\d{1,2})\]/g,
-    '<button type="button" class="citation-link" data-citation="$1" aria-label="来源 $1">[$1]</button>',
+    /\[(?:来源\s*)?(\d{1,2})\]/g,
+    '<button type="button" class="citation-link" data-citation="$1" aria-label="来源 $1">$&</button>',
   );
 }
 

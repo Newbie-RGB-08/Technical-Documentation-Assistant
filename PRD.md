@@ -646,6 +646,176 @@ const handleClick = () => {
 
 ---
 
+## 附录 C：V1.2 来源引用合并（同一文档多片段合并为一张卡片）
+
+> 触发日期 2026-10-19 · 状态：已实施并验收
+> 优化目标：来源面板中同一文档的多个检索片段合并为一张卡片，同时保证正文 `[来源N]` 点击联动仍然精确
+> 覆盖范围：后端 `build_sources` 分组 + 前端 `SourceCard` / `CitationPanel` 展示重构 + 正文引用识别补全
+
+### C.1 问题背景
+
+提问「Python 学习路线」时，面板显示 10 个"来源"，但实际只来自 2 篇文档：同一 html 的 3.1/3.2/3.4/3.5 等多个片段被各渲染成一张卡片，标题、文件路径甚至分数完全相同，用户无法分辨。
+
+| 环节 | 现状 | 问题 |
+| --- | --- | --- |
+| `build_sources` | 一个 chunk 一条记录，只做字段搬运 | 无分组逻辑，片段数即卡片数 |
+| `CitationPanel` | `sources.map(...)` 直接渲染 | 计数口径是"片段"而非"文档" |
+| 正文引用 `[来源N]` | N 是送进 LLM context 的片段序号 | 合并展示时若重排 N 会导致引用错位 |
+
+### C.2 合并规则
+
+| 规则 | 定义 |
+| --- | --- |
+| 合并键 | `(source_type, normalized_file_path)`，路径归一化 = `\`→`/` + 去首尾空白 + 大小写折叠 |
+| 代表 index | 组内最小片段序号 |
+| indices | 组内全部片段序号（升序），**并集必须严格等于 1..N** |
+| score | 组内 max（代表该文档最佳相关度，并据此降序排列） |
+| headings | 组内 `heading_path` 去重保序 |
+| excerpts | 按序号升序取摘要，后端最多 3 条 |
+| chunk_count | `len(indices)` |
+| 边界 | 缺 `file_path` 的片段单独成组；同路径但 `source_type` 不同不合并 |
+
+### C.3 后端改动
+
+- `backend/app/services/rag_service.py`：新增 `MAX_EXCERPTS`、`_normalize_path`、`_group_key`、`merge_chunks_to_sources`；`build_sources` 改为调用合并函数。**`build_context` 一字未改**（context 顺序与编号不变）。
+- SSE `sources` 事件字段由 8 项扩为 12 项，新增 `indices` / `chunk_count` / `headings` / `excerpts`；`index` / `heading_path` / `excerpt` 保留为兼容字段。
+- 新增 `backend/tests/test_build_sources_merge.py`（11 条），更新 `test_rag_service_fields.py`（字段集 12 项）、`test_main.py`（合并与 indices 覆盖）、`test_session_store.py`（合并结构 json 往返）。
+
+### C.4 前端改动
+
+- `SourceItem` 增加可选 `indices` / `chunk_count` / `headings` / `excerpts`（旧数据自动降级为单片段）。
+- `SourceCard`：根节点由 `<button>` 改为 `div[role=button]`（避免内嵌"展开"按钮的非法嵌套），新增「共 N 段」徽章、多章节列表、多摘要折叠（默认 2 条 + 「展开剩余 K 段」）。
+- `CitationPanel`：副标题改为「使用了 X 篇文档 / Y 个片段」；高亮判定改为 `indices.includes(activeIndex)`。
+- `MessageBubble`：引用识别正则由 `/\[(\d{1,2})\]/` 扩为 `/\[(?:来源\s*)?(\d{1,2})\]/`。实机复核发现本地模型按 SYSTEM_PROMPT 实际输出的是 `[来源N]` 字面量，旧正则只认 `[N]`，导致引用按钮根本不出现。
+- 新增 `CitationPanel.test.tsx`（6 条）、`useChatStream.test.tsx`（1 条），`SourceCard.test.tsx` 扩 5 条、`MessageBubble.test.tsx` 扩 2 条。
+
+### C.5 验收结果
+
+| # | 验收项 | 结果 |
+| --- | --- | --- |
+| 1 | 同一文档多片段 → 面板只显示 1 张卡片，章节齐全，摘要可展开 | ✅ 实机：10 片段 → 2 篇文档，每张「共 5 段」 |
+| 2 | 点击正文 `[来源N]`（任意 N ∈ indices）→ 面板打开且同一张卡片高亮 | ✅ 实机：点 [5] 仅包含 5 的那张卡高亮；换序号高亮正确切换 |
+| 3 | 计数双口径：面板「使用了 X 篇文档 / Y 个片段」 | ✅ 实机：2 篇/10 片段、3 篇/5 片段两种场景均正确 |
+| 4 | 不同文档不误合并；跨 source_type、空 file_path 不合并 | ✅ 单测覆盖 |
+| 5 | indices 并集严格等于 1..N 且无重复 | ✅ 单测 + 实机并集 `[1..10]` 完全覆盖 |
+| 6 | 网页跳转 / 本地 md 打开行为与 V1.1 一致 | ✅ 既有 14 条 SourceCard 用例全绿 |
+| 7 | 全量回归：后端 pytest、前端 vitest、tsc、vite build | ✅ 114 / 45 / 0 error / 0 error |
+
+### C.6 关键设计决策
+
+| 决策 | 结论 | 理由 |
+| --- | --- | --- |
+| 合并发生在展示层还是检索层 | 展示层（`build_sources` 产出聚合卡片） | 改检索层会改变送进 LLM 的 context，影响答案质量与引用编号 |
+| 合并后是否重排片段序号 | 不重排 | `[来源N]` 直接对应 context 片段序号，重排必然引用错位 |
+| 卡片如何精确联动 | 卡片携带 `indices`，前端用 `indices.includes(activeIndex)` 判定高亮 | 展示合并与引用精确性两者兼得 |
+| 前端字段是否设为必填 | 全部可选并保留兼容字段 | 老会话历史与旧 SSE payload 无需迁移即可渲染 |
+| 摘要展示上限 | 后端最多 3 条 + 前端默认折叠 2 条 | 兼顾信息量与卡片高度 |
+
+---
+
+## 附录 D：V1.3 来源面板四项优化（路径合并 / 隐藏地址 / 去标题行 / hybrid 双入口）
+
+### D.1 背景与问题
+
+V1.2 完成了「同一文档多片段合并」，但实机使用中仍存在以下体验问题：
+
+1. **同文档因路径表示不同而漏合并**：同一 `chromadb_usage.md` 入库时分别以绝对路径（`D:\...\backend\data\notes\chromadb_usage.md`）和相对路径（`data\notes\chromadb_usage.md`）出现，被判定为两个文档，渲染出两张重复卡片。
+2. **明文地址暴露**：卡片直接展示完整本地路径（`D:\...\chromadb_usage.md`）和网页 URL，信息冗余且不美观。
+3. **摘要首行重复章节标题**：分片文本以 markdown 标题行（如 `## 集合与持久化`）开头，导致摘要首行与卡片标题/章节重复。
+4. **本地笔记与网络文章为同一文档时缺少双入口**：当 personal_note 与 tech_doc 实际是同一篇内容时，用户需要既能打开本地 md，又能跳转网页原文，但 V1.2 只提供单一跳转。
+
+### D.2 优化目标
+
+| # | 目标 | 验收标准 |
+| --- | --- | --- |
+| 1 | 路径归一化合并 | 绝对路径与相对路径指向同一文件时合并为一张卡 |
+| 2 | 隐藏明文地址 | 卡片不渲染完整本地路径与网页 URL，仅显示文件名 |
+| 3 | 剥离摘要标题行 | excerpt 不以 `#` 开头的 markdown 标题行起始 |
+| 4 | hybrid 双入口 | 本地+网络同文档合并为一张卡，提供「本地打开」与「网页原文」两个按钮，本地优先 |
+
+### D.3 后端实现
+
+**`backend/app/services/rag_service.py`**
+
+1. **`_normalize_doc_path`**：归一化路径时剥离 `data/` 前缀，使绝对路径与相对路径落到同一 key。
+   - 取路径中最后一个 `/data/` 之后的部分；若以 `data/` 开头则剥离该前缀。
+   - 统一反斜杠转正斜杠、去首尾空白、casefold。
+
+2. **`_normalize_title`**：标题归一化，剥离首尾空白（含全角空格）并 casefold，用于跨类型合并匹配。
+
+3. **`_strip_heading_lines`**：摘要预处理，移除以 `#` 开头的 markdown 标题行（含 `##`、`###` 等），保留正文。
+
+4. **两轮合并**：
+   - 第一轮：按 `(source_type, normalized_path)` 分组（同 V1.2 路径合并）。
+   - 第二轮：跨 `source_type` 按归一化标题合并——当一张 `personal_note` 卡与一张 `tech_doc` 卡标题相同时，合并为 `is_hybrid: true` 卡：
+     - `source_type = "personal_note"`（本地优先）
+     - `file_path` 取本地笔记路径
+     - `source_url` 取网页文档 URL
+     - `indices` 取两者并集
+     - 仅 `personal_note × tech_doc` 组合触发；同类型不按标题合并（避免误合并不同文档）。
+
+### D.4 前端实现
+
+**`frontend/src/components/SourceCard.tsx`**
+
+1. **隐藏明文地址**：`source-path` 只渲染 `file_path` 的 basename（`split(/[\\/]/).pop()`），不再展示完整路径；移除 `title` tooltip 中的路径/URL。
+2. **移除章节列表**：不再渲染 `headings` 章节列表（与标题/摘要重复，节省卡片高度）。
+3. **hybrid 双按钮**：当 `is_hybrid === true` 时：
+   - 渲染「📄 本地打开」（primary，调 `/api/files/open`）与「↗ 网页原文」（调 `window.open`）两个按钮；
+   - 卡片整体点击**不触发跳转**（避免与显式按钮歧义），仅保留父组件的激活回调。
+4. **非 hybrid 卡**：保持 V1.2 行为（卡点击 → 本地打开或网页跳转）。
+
+**`frontend/src/types/chat.ts`**：`SourceItem` 新增 `is_hybrid?: boolean`。
+
+### D.5 测试覆盖
+
+**后端** `backend/tests/test_build_sources_merge.py`（17 条）：
+
+| 测试 | 验证点 |
+| --- | --- |
+| `test_absolute_and_relative_path_merge_to_same_doc` | 绝对+相对路径合并为一卡，indices 覆盖 |
+| `test_hybrid_local_and_web_same_title_merges` | personal_note + tech_doc 同标题 → hybrid，本地优先，双跳转字段齐全 |
+| `test_hybrid_title_normalization_ignores_whitespace_and_case` | 标题归一化忽略空白/大小写/全角空格 |
+| `test_two_tech_docs_same_title_not_merged` | 同类型 tech_doc 同标题不合并 |
+| `test_excerpt_strips_markdown_heading_lines` | 摘要剥离 `##` 标题行 |
+| `test_non_hybrid_cards_have_no_is_hybrid_flag` | 非 hybrid 卡不带 `is_hybrid` 字段 |
+
+**前端** `frontend/src/components/SourceCard.test.tsx`（21 条）：
+
+| 测试 | 验证点 |
+| --- | --- |
+| 不渲染完整本地路径，仅显示文件名 | basename 展示，完整路径不在 DOM |
+| 不渲染网页 URL 明文 | 无 `http(s)://` 文本 |
+| 合并卡片不再渲染章节列表 | headings 文本不出现在 DOM |
+| hybrid 渲染「本地打开」与「网页原文」双按钮 | 两按钮均存在 |
+| hybrid 本地按钮调用 `/api/files/open` | fetch 调用路径正确，不调 window.open |
+| hybrid 网页按钮调用 `window.open` | 打开 source_url，不调 fetch |
+| hybrid 卡片整体点击不触发跳转 | 避免与按钮歧义 |
+
+### D.6 验收结果
+
+| # | 验收项 | 结果 |
+| --- | --- | --- |
+| 1 | 同文档绝对/相对路径合并为一卡 | ✅ 实机「ChromaDB 使用要点」1 张卡 |
+| 2 | 无明文路径/URL，仅显示文件名 | ✅ 仅显示 `chromadb_usage.md` 等 basename |
+| 3 | 摘要不以 markdown 标题行起始 | ✅ 摘要首行为正文内容 |
+| 4 | 引用点击联动来源卡片高亮 | ✅ 点击 [来源N] 卡片激活 |
+| 5 | 后端 pytest 全绿 | ✅ 120 passed |
+| 6 | 前端 vitest 全绿 | ✅ 52 passed |
+| 7 | tsc / vite build 零错误 | ✅ 0 error / built in 668ms |
+
+### D.7 关键设计决策
+
+| 决策 | 结论 | 理由 |
+| --- | --- | --- |
+| 路径归一化是否剥离 `data/` 前缀 | 是 | 入库时相对路径带 `data/`、绝对路径含完整 `.../data/`，剥离后才能落到同一 key |
+| hybrid 合并是否仅限于跨类型 | 是 | 同类型同标题可能是不同文档（如两篇「Python 速览」），仅 personal_note × tech_doc 才判定为同一内容的两种载体 |
+| hybrid 卡整体点击是否跳转 | 否 | 已有两个显式按钮，卡点击跳转易产生歧义（该跳本地还是网页？） |
+| 章节列表是否完全移除 | 是 | V1.2 的章节列表与标题/摘要重复，且 V1.3 摘要已剥离标题行，章节信息冗余 |
+| 本地路径如何展示 | 仅 basename | 完整路径既长又暴露目录结构，文件名已足够标识来源 |
+
+---
+
 ## 附录 A：长期演进备忘（非 V1 范围，仅记录决策依据）
 
 - **ChromaDB 恶化信号阈值**：chunk > 10 万、单次检索 > 1 秒、内存 > 可用 RAM 70%、索引文件 > 预期 10 倍、Recall@5 < 50% —— 触发任一即启动迁移评估

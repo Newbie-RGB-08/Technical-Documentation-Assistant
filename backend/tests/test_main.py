@@ -110,6 +110,11 @@ def test_sse_happy_path_emits_expected_sequence(tmp_path):
     assert sources[0]["index"] == 1
     # V1.1 新增字段（允许旧测试未携带 source_url/title/source_type → 默认空串）
     assert set(sources[0].keys()) >= {"index", "title", "file_path", "heading_path", "source_type", "source_url", "excerpt", "score"}
+    # V1.2：两个片段同属 notes/a.md → 合并为 1 张卡片，且 indices 必须覆盖全部片段序号
+    assert len(sources) == 1, "同一文档的多个片段应合并为一张卡片"
+    assert sources[0]["indices"] == [1, 2]
+    assert sources[0]["chunk_count"] == 2
+    assert sorted(i for s in sources for i in s["indices"]) == [1, 2]
 
     content = "".join(d["text"] for e, d in events if e == "content")
     assert content == "这是一段模拟回答。"
