@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 1060" font-family="'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#64748b"/>
+    </marker>
+    <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#dc2626"/>
+    </marker>
+    <marker id="arrA" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#d97706"/>
+    </marker>
+  </defs>
+
+  <text x="480" y="34" text-anchor="middle" font-size="22" font-weight="bold" fill="#111827">对话主流程（SSE 流式）</text>
+  <text x="480" y="56" text-anchor="middle" font-size="13" fill="#6b7280">提问评分 → 改写 → 分级检索 → 置信度/兜底 → 流式生成 · 六类事件贯穿全程</text>
+
+  <!-- Main column: x = 60..420 (w=360), center x=240 -->
+  <g font-family="inherit">
+    <rect x="60" y="78" width="360" height="46" rx="10" fill="#eef2ff" stroke="#6366f1" stroke-width="1.5"/>
+    <text x="240" y="106" text-anchor="middle" font-size="14" font-weight="bold" fill="#3730a3">用户提问 · POST /api/chat/stream</text>
+
+    <line x1="240" y1="124" x2="240" y2="148" stroke="#64748b" stroke-width="1.6" marker-end="url(#arr)"/>
+
+    <rect x="60" y="152" width="360" height="46" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.3"/>
+    <text x="240" y="180" text-anchor="middle" font-size="14" font-weight="bold" fill="#334155">① 敏感 / 越狱检查</text>
+
+    <!-- branch: sensitive refuse -->
+    <line x1="420" y1="175" x2="528" y2="175" stroke="#dc2626" stroke-width="1.5" marker-end="url(#arrR)"/>
+    <rect x="536" y="148" width="380" height="56" rx="10" fill="#fef2f2" stroke="#f87171" stroke-width="1.3"/>
+    <text x="726" y="172" text-anchor="middle" font-size="13" font-weight="bold" fill="#b91c1c">命中敏感 / 越狱词 → 直接拒答</text>
+    <text x="726" y="191" text-anchor="middle" font-size="11" fill="#7f1d1d">「抱歉，我无法处理该请求」· 不进入检索</text>
+
+    <line x1="240" y1="198" x2="240" y2="222" stroke="#64748b" stroke-width="1.6" marker-end="url(#arr)"/>
+
+    <rect x="60" y="226" width="360" height="56" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.3"/>
+    <text x="240" y="250" text-anchor="middle" font-size="14" font-weight="bold" fill="#334155">② 提问评分（五维 ×20）</text>
+    <text x="240" y="270" text-anchor="middle" font-size="11.5" fill="#64748b">意图明确 / 信息完整 / 领域相关 / 问题复杂 / 安全合规</text>
+
+    <!-- branch: q_score < 60 -->
+    <line x1="420" y1="254" x2="528" y2="254" stroke="#d97706" stroke-width="1.5" marker-end="url(#arrA)"/>
+    <rect x="536" y="210" width="380" height="88" rx="10" fill="#fffbeb" stroke="#fbbf24" stroke-width="1.3"/>
+    <text x="726" y="234" text-anchor="middle" font-size="13" font-weight="bold" fill="#b45309">总分 &lt; 60 → confirm 事件</text>
+    <text x="726" y="254" text-anchor="middle" font-size="11" fill="#92400e">前端确认框：原始问题 + 改写结果</text>
+    <text x="726" y="272" text-anchor="middle" font-size="11" fill="#92400e">确认 → 用改写后问题重入（跳过评分）</text>
+    <text x="726" y="290" text-anchor="middle" font-size="11" fill="#92400e">修改 → 编辑后重新提交 · 记录 → 写入 SQLite</text>
+
+    <line x1="240" y1="282" x2="240" y2="306" stroke="#64748b" stroke-width="1.6" marker-end="url(#arr)"/>
+
+    <rect x="60" y="310" width="360" height="46" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.3"/>
+    <text x="240" y="338" text-anchor="middle" font-size="14" font-weight="bold" fill="#334155">③ 问题改写（3 轮历史 · qwen2.5:3b）</text>
+
+    <line x1="240" y1="356" x2="240" y2="380" stroke="#64748b" stroke-width="1.6" marker-end="url(#arr)"/>
+
+    <rect x="60" y="384" width="360" height="46" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.3"/>
+    <text x="240" y="412" text-anchor="middle" font-size="14" font-weight="bold" fill="#334155">④ 检索评分 → 定级 L0~L3</text>
+
+    <line x1="240" y1="430" x2="240" y2="454" stroke="#64748b" stroke-width="1.6" marker-end="url(#arr)"/>
+
+    <rect x="60" y="458" width="360" height="56" rx="10" fill="#f5f3ff" stroke="#8b5cf6" stroke-width="1.4"/>
+    <text x="240" y="482" text-anchor="middle" font-size="14" font-weight="bold" fill="#5b21b6">⑤ 分级检索（带降级）</text>
+    <text x="240" y="502" text-anchor="middle" font-size="11.5" fill="#6d28d9">失败自动逐级回退 L3 → L2 → L1 → L0</text>
+
+    <rect x="536" y="452" width="380" height="68" rx="10" fill="#faf5ff" stroke="#c4b5fd" stroke-width="1.2"/>
+    <text x="726" y="474" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#6d28d9">L3 向量+BM25 → RRF(k=60) → Rerank 精排</text>
+    <text x="726" y="494" text-anchor="middle" font-size="12" fill="#6d28d9">L2 混合 + RRF（无 Rerank）· L1 纯向量(≥0.5)</text>
+    <text x="726" y="512" text-anchor="middle" font-size="12" fill="#6d28d9">权重：向量 1.0 / BM25 0.7 · 阈值 0.45 触发降级</text>
+
+    <line x1="240" y1="514" x2="240" y2="538" stroke="#64748b" stroke-width="1.6" marker-end="url(#arr)"/>
+
+    <rect x="60" y="542" width="360" height="56" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.3"/>
+    <text x="240" y="566" text-anchor="middle" font-size="14" font-weight="bold" fill="#334155">⑥ 置信度判定</text>
+    <text x="240" y="586" text-anchor="middle" font-size="11.5" fill="#64748b">L3 rerank 最高分 / L2 RRF 归一化 / L1 相似度</text>
+
+    <!-- branch: confidence < 0.3 -->
+    <line x1="420" y1="570" x2="528" y2="570" stroke="#d97706" stroke-width="1.5" marker-end="url(#arrA)"/>
+    <rect x="536" y="540" width="380" height="88" rx="10" fill="#fffbeb" stroke="#fbbf24" stroke-width="1.3"/>
+    <text x="726" y="564" text-anchor="middle" font-size="13" font-weight="bold" fill="#b45309">&lt; 0.3 或检索为空 → ⑦ 兜底分流</text>
+    <text x="726" y="584" text-anchor="middle" font-size="11" fill="#92400e">sensitive → 拒答</text>
+    <text x="726" y="602" text-anchor="middle" font-size="11" fill="#92400e">kb_related → 「未在现有文档中找到相关内容」</text>
+    <text x="726" y="620" text-anchor="middle" font-size="11" fill="#92400e">general → 声明「未基于本地知识库」后自答</text>
+
+    <line x1="240" y1="598" x2="240" y2="622" stroke="#64748b" stroke-width="1.6" marker-end="url(#arr)"/>
+
+    <rect x="60" y="626" width="360" height="46" rx="10" fill="#ecfdf5" stroke="#10b981" stroke-width="1.4"/>
+    <text x="240" y="654" text-anchor="middle" font-size="14" font-weight="bold" fill="#047857">⑧ sources 事件 · 来源合并卡片</text>
+
+    <rect x="536" y="634" width="380" height="42" rx="10" fill="#f0fdf4" stroke="#6ee7b7" stroke-width="1.2"/>
+    <text x="726" y="652" text-anchor="middle" font-size="11.5" fill="#065f46">同文档多片段合并为一卡（indices 保序）</text>
+    <text x="726" y="669" text-anchor="middle" font-size="11.5" fill="#065f46">local × web 同标题 → hybrid 双入口卡片</text>
+
+    <line x1="240" y1="672" x2="240" y2="696" stroke="#64748b" stroke-width="1.6" marker-end="url(#arr)"/>
+
+    <rect x="60" y="700" width="360" height="46" rx="10" fill="#e0f2fe" stroke="#38bdf8" stroke-width="1.4"/>
+    <text x="240" y="728" text-anchor="middle" font-size="14" font-weight="bold" fill="#0369a1">⑨ SSE 流式生成 · content 增量</text>
+
+    <rect x="536" y="708" width="380" height="42" rx="10" fill="#f0f9ff" stroke="#7dd3fc" stroke-width="1.2"/>
+    <text x="726" y="726" text-anchor="middle" font-size="11.5" fill="#0c4a6e">中置信（0.3~0.6）先附「以下回答可能不完整」</text>
+    <text x="726" y="743" text-anchor="middle" font-size="11.5" fill="#0c4a6e">回答中 [来源N] 标注 → 点击联动来源面板</text>
+
+    <line x1="240" y1="746" x2="240" y2="770" stroke="#64748b" stroke-width="1.6" marker-end="url(#arr)"/>
+
+    <rect x="60" y="774" width="360" height="46" rx="10" fill="#eef2ff" stroke="#6366f1" stroke-width="1.5"/>
+    <text x="240" y="802" text-anchor="middle" font-size="14" font-weight="bold" fill="#3730a3">⑩ done 事件 · session_id 落库</text>
+
+    <rect x="536" y="782" width="380" height="42" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.2"/>
+    <text x="726" y="800" text-anchor="middle" font-size="11.5" fill="#475569">异常 → error 事件（错误码 + 建议）</text>
+    <text x="726" y="817" text-anchor="middle" font-size="11.5" fill="#475569">前端可随时停止（AbortController）</text>
+  </g>
+
+  <text x="480" y="862" text-anchor="middle" font-size="12" fill="#6b7280">事件时序：meta → sources → content* → done；模糊/低分问题插入 confirm；异常以 error 终止</text>
+  <text x="480" y="884" text-anchor="middle" font-size="12" fill="#6b7280">防幻觉硬约束：不编造来源引用 · 未检索到不假装引用 · 低置信不脑补扩写</text>
+</svg>

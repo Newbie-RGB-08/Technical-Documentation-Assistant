@@ -1,0 +1,169 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 940" font-family="'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#64748b"/>
+    </marker>
+    <marker id="arrB" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#3b82f6"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="580" y="34" text-anchor="middle" font-size="22" font-weight="bold" fill="#111827">PTDRA 系统架构总览</text>
+  <text x="580" y="56" text-anchor="middle" font-size="13" fill="#6b7280">个人技术文档研究助手 · 前端 + Agent 执行 + 知识处理 + 数据采集 四层</text>
+
+  <!-- ============ Layer 1: Frontend ============ -->
+  <rect x="80" y="80" width="1000" height="110" rx="14" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+  <rect x="80" y="80" width="78" height="26" rx="13" fill="#3b82f6"/>
+  <text x="119" y="97" text-anchor="middle" font-size="12" font-weight="bold" fill="#ffffff">前端层</text>
+  <text x="176" y="108" font-size="15" font-weight="bold" fill="#1d4ed8">前端对话工作台</text>
+  <text x="176" y="127" font-size="12" fill="#475569">React 18 + TypeScript + Vite · SSE 流式渲染 · 打字机效果 · AbortController 停止生成</text>
+
+  <g font-size="11.5" fill="#1e40af">
+    <rect x="110" y="142" width="180" height="32" rx="8" fill="#ffffff" stroke="#93c5fd" stroke-width="1"/>
+    <text x="200" y="162" text-anchor="middle">来源引用面板 · 点击联动</text>
+    <rect x="302" y="142" width="180" height="32" rx="8" fill="#ffffff" stroke="#93c5fd" stroke-width="1"/>
+    <text x="392" y="162" text-anchor="middle">确认弹窗 · 确认/修改/记录</text>
+    <rect x="494" y="142" width="180" height="32" rx="8" fill="#ffffff" stroke="#93c5fd" stroke-width="1"/>
+    <text x="584" y="162" text-anchor="middle">模型选择器 · 本地/云端</text>
+    <rect x="686" y="142" width="180" height="32" rx="8" fill="#ffffff" stroke="#93c5fd" stroke-width="1"/>
+    <text x="776" y="162" text-anchor="middle">Liquid Glass 毛玻璃主题</text>
+    <rect x="878" y="142" width="176" height="32" rx="8" fill="#ffffff" stroke="#93c5fd" stroke-width="1"/>
+    <text x="966" y="162" text-anchor="middle">Markdown 渲染 + DOMPurify</text>
+  </g>
+
+  <!-- Arrow: Frontend -> Agent -->
+  <line x1="580" y1="190" x2="580" y2="224" stroke="#3b82f6" stroke-width="2" marker-end="url(#arrB)"/>
+  <text x="600" y="211" font-size="12" fill="#2563eb">SSE 六事件协议：meta · sources · content · confirm · error · done</text>
+
+  <!-- ============ Layer 2: Agent ============ -->
+  <rect x="80" y="228" width="1000" height="320" rx="14" fill="#faf5ff" stroke="#8b5cf6" stroke-width="1.5"/>
+  <rect x="80" y="228" width="78" height="26" rx="13" fill="#8b5cf6"/>
+  <text x="119" y="245" text-anchor="middle" font-size="12" font-weight="bold" fill="#ffffff">执行层</text>
+  <text x="176" y="256" font-size="15" font-weight="bold" fill="#6d28d9">Agent 执行层 · FastAPI 后端编排</text>
+  <text x="176" y="275" font-size="12" fill="#475569">core/ 纯逻辑 + services/ 编排 + routers/ SSE · 全链路 try/except 自动降级</text>
+
+  <!-- Pipeline Row A -->
+  <g>
+    <rect x="110" y="290" width="212" height="70" rx="10" fill="#ffffff" stroke="#c4b5fd" stroke-width="1.2"/>
+    <text x="216" y="314" text-anchor="middle" font-size="13" font-weight="bold" fill="#4c1d95">① 提问评分</text>
+    <text x="216" y="334" text-anchor="middle" font-size="11" fill="#475569">五维 ×20 · 规则引擎不调 LLM</text>
+    <text x="216" y="349" text-anchor="middle" font-size="11" fill="#475569">意图 / 完整 / 领域 / 复杂 / 安全</text>
+
+    <line x1="330" y1="325" x2="346" y2="325" stroke="#8b5cf6" stroke-width="1.6" marker-end="url(#arr)"/>
+    <rect x="354" y="290" width="212" height="70" rx="10" fill="#ffffff" stroke="#c4b5fd" stroke-width="1.2"/>
+    <text x="460" y="314" text-anchor="middle" font-size="13" font-weight="bold" fill="#4c1d95">② 问题改写</text>
+    <text x="460" y="334" text-anchor="middle" font-size="11" fill="#475569">最近 3 轮历史 · qwen2.5:3b</text>
+    <text x="460" y="349" text-anchor="middle" font-size="11" fill="#475569">指代消解 → 独立完整查询</text>
+
+    <line x1="574" y1="325" x2="590" y2="325" stroke="#8b5cf6" stroke-width="1.6" marker-end="url(#arr)"/>
+    <rect x="598" y="290" width="212" height="70" rx="10" fill="#ffffff" stroke="#c4b5fd" stroke-width="1.2"/>
+    <text x="704" y="314" text-anchor="middle" font-size="13" font-weight="bold" fill="#4c1d95">③ 检索评分定级</text>
+    <text x="704" y="334" text-anchor="middle" font-size="11" fill="#475569">关键字权重 + 长度调节 - 指代惩罚</text>
+    <text x="704" y="349" text-anchor="middle" font-size="11" fill="#475569">≥80 L3 · ≥60 L2 · ≥40 L1 · &lt;40 L0</text>
+
+    <line x1="818" y1="325" x2="834" y2="325" stroke="#8b5cf6" stroke-width="1.6" marker-end="url(#arr)"/>
+    <rect x="842" y="290" width="212" height="70" rx="10" fill="#ffffff" stroke="#c4b5fd" stroke-width="1.2"/>
+    <text x="948" y="314" text-anchor="middle" font-size="13" font-weight="bold" fill="#4c1d95">④ 分级检索</text>
+    <text x="948" y="334" text-anchor="middle" font-size="11" fill="#475569">L3 向量+BM25→RRF→Rerank</text>
+    <text x="948" y="349" text-anchor="middle" font-size="11" fill="#475569">失败逐级降级 L3→L2→L1→L0</text>
+  </g>
+
+  <!-- Vertical arrow Row A -> Row B -->
+  <line x1="460" y1="360" x2="460" y2="382" stroke="#8b5cf6" stroke-width="1.6" marker-end="url(#arr)"/>
+
+  <!-- Pipeline Row B -->
+  <g>
+    <rect x="110" y="386" width="212" height="70" rx="10" fill="#ffffff" stroke="#c4b5fd" stroke-width="1.2"/>
+    <text x="216" y="410" text-anchor="middle" font-size="13" font-weight="bold" fill="#4c1d95">⑤ 置信度判定</text>
+    <text x="216" y="430" text-anchor="middle" font-size="11" fill="#475569">L3 rerank / L2 RRF 归一化 / L1 相似度</text>
+    <text x="216" y="445" text-anchor="middle" font-size="11" fill="#475569">≥0.6 高置信 · 0.3~0.6 附提示</text>
+
+    <line x1="330" y1="421" x2="346" y2="421" stroke="#8b5cf6" stroke-width="1.6" marker-end="url(#arr)"/>
+    <rect x="354" y="386" width="212" height="70" rx="10" fill="#ffffff" stroke="#c4b5fd" stroke-width="1.2"/>
+    <text x="460" y="410" text-anchor="middle" font-size="13" font-weight="bold" fill="#4c1d95">⑥ 兜底分流</text>
+    <text x="460" y="430" text-anchor="middle" font-size="11" fill="#475569">sensitive 拒答 · kb_related 未找到</text>
+    <text x="460" y="445" text-anchor="middle" font-size="11" fill="#475569">general 声明后自答（防幻觉）</text>
+
+    <line x1="574" y1="421" x2="590" y2="421" stroke="#8b5cf6" stroke-width="1.6" marker-end="url(#arr)"/>
+    <rect x="598" y="386" width="212" height="70" rx="10" fill="#ffffff" stroke="#c4b5fd" stroke-width="1.2"/>
+    <text x="704" y="410" text-anchor="middle" font-size="13" font-weight="bold" fill="#4c1d95">⑦ 上下文组装</text>
+    <text x="704" y="430" text-anchor="middle" font-size="11" fill="#475569">System Prompt + [来源N] 片段</text>
+    <text x="704" y="445" text-anchor="middle" font-size="11" fill="#475569">file_path / heading_path / source_url</text>
+
+    <line x1="818" y1="421" x2="834" y2="421" stroke="#8b5cf6" stroke-width="1.6" marker-end="url(#arr)"/>
+    <rect x="842" y="386" width="212" height="70" rx="10" fill="#ffffff" stroke="#c4b5fd" stroke-width="1.2"/>
+    <text x="948" y="410" text-anchor="middle" font-size="13" font-weight="bold" fill="#4c1d95">⑧ SSE 流式生成</text>
+    <text x="948" y="430" text-anchor="middle" font-size="11" fill="#475569">网关流式 chat → content 增量</text>
+    <text x="948" y="445" text-anchor="middle" font-size="11" fill="#475569">异常 → error · 结束 → done</text>
+  </g>
+
+  <!-- LLM Gateway -->
+  <rect x="110" y="472" width="944" height="62" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.3" stroke-dasharray="5 3"/>
+  <text x="128" y="494" font-size="13" font-weight="bold" fill="#334155">LLM 统一网关 · models.yaml 路由链</text>
+  <text x="128" y="510" font-size="11.5" fill="#475569">失败自动降级 · 超时重试 ≤2 · API Key 走 .env ${VAR} · 全链失败 → 友好 error 事件</text>
+  <g font-size="11" fill="#334155">
+    <rect x="420" y="484" width="120" height="26" rx="13" fill="#e0e7ff" stroke="#818cf8" stroke-width="1"/><text x="480" y="501" text-anchor="middle">Ollama 7b（生成）</text>
+    <rect x="548" y="484" width="120" height="26" rx="13" fill="#e0e7ff" stroke="#818cf8" stroke-width="1"/><text x="608" y="501" text-anchor="middle">Ollama 3b（改写）</text>
+    <rect x="676" y="484" width="100" height="26" rx="13" fill="#e0e7ff" stroke="#818cf8" stroke-width="1"/><text x="726" y="501" text-anchor="middle">DeepSeek</text>
+    <rect x="784" y="484" width="92" height="26" rx="13" fill="#e0e7ff" stroke="#818cf8" stroke-width="1"/><text x="830" y="501" text-anchor="middle">Qwen 百炼</text>
+    <rect x="884" y="484" width="90" height="26" rx="13" fill="#e0e7ff" stroke="#818cf8" stroke-width="1"/><text x="929" y="501" text-anchor="middle">OpenAI</text>
+    <rect x="982" y="484" width="62" height="26" rx="13" fill="#fee2e2" stroke="#f87171" stroke-width="1"/><text x="1013" y="501" text-anchor="middle">本地 Rerank</text>
+  </g>
+
+  <!-- Arrow: Agent -> Knowledge -->
+  <line x1="580" y1="548" x2="580" y2="584" stroke="#64748b" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="600" y="571" font-size="12" fill="#475569">混合检索：query 向量 + BM25</text>
+
+  <!-- ============ Layer 3: Knowledge ============ -->
+  <rect x="80" y="588" width="1000" height="122" rx="14" fill="#ecfdf5" stroke="#10b981" stroke-width="1.5"/>
+  <rect x="80" y="588" width="78" height="26" rx="13" fill="#10b981"/>
+  <text x="119" y="605" text-anchor="middle" font-size="12" font-weight="bold" fill="#ffffff">处理层</text>
+  <text x="176" y="616" font-size="15" font-weight="bold" fill="#047857">知识处理层</text>
+  <text x="176" y="635" font-size="12" fill="#475569">标题感知分块（512 / 64）→ bge-small-zh-v1.5 向量化 → 四类存储分工</text>
+
+  <g font-size="11.5" fill="#065f46">
+    <rect x="110" y="648" width="220" height="50" rx="9" fill="#ffffff" stroke="#6ee7b7" stroke-width="1.2"/>
+    <text x="220" y="670" text-anchor="middle" font-size="12.5" font-weight="bold">ChromaDB 向量库</text>
+    <text x="220" y="687" text-anchor="middle" font-size="10.5" fill="#475569">cosine · 多集合 tech_docs / personal_notes</text>
+
+    <rect x="348" y="648" width="220" height="50" rx="9" fill="#ffffff" stroke="#6ee7b7" stroke-width="1.2"/>
+    <text x="458" y="670" text-anchor="middle" font-size="12.5" font-weight="bold">BM25 内存索引</text>
+    <text x="458" y="687" text-anchor="middle" font-size="10.5" fill="#475569">jieba 分词 · rank-bm25 · 增量加载</text>
+
+    <rect x="586" y="648" width="220" height="50" rx="9" fill="#ffffff" stroke="#6ee7b7" stroke-width="1.2"/>
+    <text x="696" y="670" text-anchor="middle" font-size="12.5" font-weight="bold">MySQL 8.0 元数据</text>
+    <text x="696" y="687" text-anchor="middle" font-size="10.5" fill="#475569">documents / chunks / tags / ingest_tasks</text>
+
+    <rect x="824" y="648" width="230" height="50" rx="9" fill="#ffffff" stroke="#6ee7b7" stroke-width="1.2"/>
+    <text x="939" y="670" text-anchor="middle" font-size="12.5" font-weight="bold">SQLite 会话存储</text>
+    <text x="939" y="687" text-anchor="middle" font-size="10.5" fill="#475569">对话历史 · 评分日志 · 反馈记录</text>
+  </g>
+
+  <!-- Arrow: Knowledge <- Data collection -->
+  <line x1="580" y1="710" x2="580" y2="742" stroke="#64748b" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="600" y="731" font-size="12" fill="#475569">入库写入：向量 + 元数据 + 索引</text>
+
+  <!-- ============ Layer 4: Data collection ============ -->
+  <rect x="80" y="746" width="1000" height="118" rx="14" fill="#fff7ed" stroke="#f59e0b" stroke-width="1.5"/>
+  <rect x="80" y="746" width="78" height="26" rx="13" fill="#f59e0b"/>
+  <text x="119" y="763" text-anchor="middle" font-size="12" font-weight="bold" fill="#ffffff">采集层</text>
+  <text x="176" y="774" font-size="15" font-weight="bold" fill="#b45309">数据采集层</text>
+  <text x="176" y="793" font-size="12" fill="#475569">两个数据源统一入库 · SHA-256 内容哈希变更检测 · 未变更自动跳过</text>
+
+  <g font-size="11.5" fill="#78350f">
+    <rect x="110" y="806" width="430" height="46" rx="9" fill="#ffffff" stroke="#fcd34d" stroke-width="1.2"/>
+    <text x="325" y="826" text-anchor="middle" font-size="12.5" font-weight="bold">技术文档爬取 · Crawl4AI</text>
+    <text x="325" y="842" text-anchor="middle" font-size="10.5" fill="#475569">HTML→Markdown · 去导航噪声 · 保留代码块/表格 · 间隔 ≥2s</text>
+
+    <rect x="570" y="806" width="430" height="46" rx="9" fill="#ffffff" stroke="#fcd34d" stroke-width="1.2"/>
+    <text x="785" y="826" text-anchor="middle" font-size="12.5" font-weight="bold">本地笔记扫描 · pathlib</text>
+    <text x="785" y="842" text-anchor="middle" font-size="10.5" fill="#475569">递归 .md · front-matter 元数据 · source_url 透传</text>
+
+    <rect x="1080" y="806" width="70" height="46" rx="9" fill="#fff7ed" stroke="#f59e0b" stroke-width="1"/>
+  </g>
+  <line x1="548" y1="829" x2="566" y2="829" stroke="#f59e0b" stroke-width="1.6" marker-end="url(#arr)"/>
+
+  <!-- Footer -->
+  <text x="580" y="898" text-anchor="middle" font-size="12" fill="#6b7280">存储抽象 VectorStore / MetadataStore 接口隔离底层 · 为未来迁移 Qdrant 预留</text>
+</svg>
