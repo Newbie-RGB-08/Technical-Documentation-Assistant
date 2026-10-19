@@ -42,6 +42,7 @@ def prepare_chunks(
         "tags": file_record.get("tags", []),
         "created_at": file_record.get("created_at", ""),
         "updated_at": file_record.get("updated_at", ""),
+        "source_url": file_record.get("source_url") or "",
         "content_hash": content_hash or compute_content_hash(file_record["content"]),
     }
     chunks = chunk_markdown(
@@ -93,6 +94,7 @@ def ingest_files(
                     "file_path": file_path,
                     "source_type": record["source_type"],
                     "title": record.get("title"),
+                    "source_url": record.get("source_url") or "",
                     "content_hash": content_hash,
                     "chunk_count": len(chunks),
                 }

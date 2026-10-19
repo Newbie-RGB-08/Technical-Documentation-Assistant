@@ -49,7 +49,7 @@ def _file_meta_from_path(p: Path, source_type: str) -> dict:
 def scan_markdown_files(directory: str | Path, source_type: str = "personal_note") -> list[dict]:
     """扫描目录下全部 .md，返回文件级元数据列表（不含分块）。
 
-    每项: {file_path, source_type, title, tags, created_at, updated_at, content}
+    每项: {file_path, source_type, title, tags, created_at, updated_at, source_url, content}
     """
     root = Path(directory)
     if not root.exists():
@@ -74,6 +74,7 @@ def scan_markdown_files(directory: str | Path, source_type: str = "personal_note
                 "tags": tags,
                 "created_at": str(fm.get("created_at") or meta["created_at"]),
                 "updated_at": str(fm.get("updated_at") or meta["updated_at"]),
+                "source_url": str(fm.get("source_url") or ""),
                 "content": body,
             }
         )

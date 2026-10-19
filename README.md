@@ -70,7 +70,25 @@ PTDRA/
 - Ollama（localhost:11434，已拉取 `qwen2.5:7b` + `qwen2.5:3b`）
 - 首次启动需要联网下载 `bge-small-zh-v1.5`（~90MB）和 `bge-reranker-v2-m3`（~2GB），已默认走 HF 镜像
 
-### 后端
+### 一键启动（Windows）
+
+项目根目录提供两个启动脚本，**双击即可**（会自动开窗口跑服务、等待就绪、再打开对应网址）：
+
+| 脚本 | 作用 | 打开的网址 |
+| --- | --- | --- |
+| `start-backend.bat` | 用项目内 `.venv` 启动 uvicorn | http://127.0.0.1:8000/docs （Swagger 接口文档） |
+| `start-frontend.bat` | 启动 Vite dev server（`node_modules` 缺失时自动 `npm install`） | http://127.0.0.1:5173 （对话工作台） |
+
+脚本行为说明：
+
+- 会先探测端口，若服务已在运行则**直接复用并打开页面**，不会重复启动
+- 后端首次启动需加载嵌入与重排模型，最长等待 5 分钟；超时会给出提示但服务仍在后台窗口继续启动
+- npm 缓存与镜像固定在项目内（`.npm-cache` / npmmirror），避免落到受限的全局缓存目录
+- 关闭服务：关掉标题为 `python`（后端）或 `npm run dev`（前端）的日志窗口即可
+
+> 两个脚本为 GBK + CRLF 编码（Windows 控制台默认代码页 936），编辑时请勿改成 UTF-8 或 LF，否则 cmd 会解析错乱。
+
+### 手动启动（后端）
 ```bash
 cd backend
 pip install -r requirements.txt
@@ -83,7 +101,7 @@ pytest                  # 82 单测
 uvicorn app.main:app --port 8000
 ```
 
-### 前端
+### 手动启动（前端）
 ```bash
 cd frontend
 npm install --registry=https://registry.npmmirror.com \
@@ -93,8 +111,11 @@ npm run test            # 22 vitest
 npm run typecheck       # tsc --noEmit
 npm run build           # 生产构建
 
-npm run dev             # Vite dev，代理 /api → :8000
+npm run dev -- --host 127.0.0.1    # Vite dev，代理 /api → :8000
 ```
+
+> `--host 127.0.0.1` 用于强制 Vite 绑定 IPv4；不指定时 Vite 默认只监听 `::1`，
+> 此时 `http://127.0.0.1:5173` 打不开（需改用 `http://localhost:5173`）。
 
 ### 入库与对话
 ```bash

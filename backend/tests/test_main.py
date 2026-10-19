@@ -108,6 +108,8 @@ def test_sse_happy_path_emits_expected_sequence(tmp_path):
     assert sources[0]["file_path"] == "notes/a.md"
     assert sources[0]["heading_path"] == "Chroma 入门"
     assert sources[0]["index"] == 1
+    # V1.1 新增字段（允许旧测试未携带 source_url/title/source_type → 默认空串）
+    assert set(sources[0].keys()) >= {"index", "title", "file_path", "heading_path", "source_type", "source_url", "excerpt", "score"}
 
     content = "".join(d["text"] for e, d in events if e == "content")
     assert content == "这是一段模拟回答。"

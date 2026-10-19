@@ -128,3 +128,59 @@ def test_single_file_failure_does_not_block_batch(stores, tmp_path):
     summary = ingest_files(files_with_bad, vector_store, metadata_store)
     assert summary["failed"] == 1 and summary["ingested"] == 1
     assert summary["errors"][0]["file_path"].endswith("bad.md")
+
+
+def test_prepare_chunks_carries_source_url():
+    """prepare_chunks 把 source_url 透传到每个 chunk 的 metadata。"""
+    from app.services.ingest_pipeline import prepare_chunks
+
+    record = {
+        "file_path": "/tmp/x.md",
+        "source_type": "tech_doc",
+        "title": "T",
+        "tags": [],
+        "content": "# 标题\n\n正文片段，正文片段，正文片段。",
+        "source_url": "https://example.com/doc",
+    }
+    chunks = prepare_chunks(record, chunk_size=1000, chunk_overlap=0)
+    assert chunks
+    for c in chunks:
+        assert c["metadata"]["source_url"] == "https://example.com/doc"
+        assert c["metadata"]["source_type"] == "tech_doc"
+
+
+def test_ingest_writes_source_url_to_document_and_chunks(stores, tmp_path):
+    """完整入库流程把 source_url 同时写进 MySQL documents 与 Chroma chunk metadata。"""
+    from app.services.ingest_pipeline import ingest_files
+
+    fm = (
+        "---\n"
+        "title: FastAPI Depends 实战\n"
+        "source_url: https://fastapi.tiangolo.com/tutorial/dependencies/\n"
+        "created_at: 2026-01-01\n"
+        "updated_at: 2026-01-01\n"
+        "---\n\n"
+        "# FastAPI Depends\n\n"
+        "依赖注入的正文内容。"
+    )
+    p = tmp_path / "depends.md"
+    p.write_text(fm, encoding="utf-8")
+    files = scan_markdown_files(tmp_path, source_type="tech_doc")
+    files[0]["source_url"] = "https://fastapi.tiangolo.com/tutorial/dependencies/"
+
+    vector_store, metadata_store = stores
+    summary = ingest_files(files, vector_store, metadata_store, force_reingest=True)
+    assert summary["ingested"] == 1
+
+    # MySQL 文档记录
+    doc = metadata_store.get_document(str(p))
+    assert doc is not None
+    assert doc.get("source_url") == "https://fastapi.tiangolo.com/tutorial/dependencies/"
+
+    # Chroma chunk metadata
+    results = vector_store.query("Depends 依赖注入", source_type="tech_doc", top_k=3)
+    # (Chroma 可能还被其他测试占着，只要能找到我们的文件就行)
+    our = [r for r in results if r["metadata"].get("file_path") == str(p)]
+    assert our, "Chroma 未找到我们的测试文档"
+    for c in our:
+        assert c["metadata"].get("source_url") == "https://fastapi.tiangolo.com/tutorial/dependencies/"

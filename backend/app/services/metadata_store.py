@@ -39,6 +39,7 @@ class Document(Base):
     file_path: Mapped[str] = mapped_column(String(512), unique=True)
     source_type: Mapped[str] = mapped_column(Enum("tech_doc", "personal_note"))
     title: Mapped[str | None] = mapped_column(String(255))
+    source_url: Mapped[str | None] = mapped_column(String(512))
     content_hash: Mapped[str] = mapped_column(String(64))
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -114,7 +115,10 @@ class MySQLMetadataStore(MetadataStore):
                 select(Document).where(Document.file_path == doc["file_path"])
             ).scalar_one_or_none()
             if existing:
-                for field in ("source_type", "title", "content_hash", "chunk_count"):
+                for field in (
+                    "source_type", "title", "source_url",
+                    "content_hash", "chunk_count",
+                ):
                     if field in doc:
                         setattr(existing, field, doc[field])
                 existing.last_ingested = datetime.now()
@@ -124,6 +128,7 @@ class MySQLMetadataStore(MetadataStore):
                     file_path=doc["file_path"],
                     source_type=doc["source_type"],
                     title=doc.get("title"),
+                    source_url=doc.get("source_url") or None,
                     content_hash=doc["content_hash"],
                     chunk_count=doc.get("chunk_count", 0),
                     last_ingested=datetime.now(),
@@ -253,6 +258,7 @@ class MySQLMetadataStore(MetadataStore):
             "file_path": r.file_path,
             "source_type": r.source_type,
             "title": r.title,
+            "source_url": r.source_url or "",
             "content_hash": r.content_hash,
             "chunk_count": r.chunk_count,
             "created_at": r.created_at.isoformat() if r.created_at else None,

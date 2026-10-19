@@ -352,9 +352,54 @@ select {
 
 .source-card-header {
   display: flex;
-  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
   color: rgba(245, 247, 255, 0.72);
   font-size: 12px;
+}
+
+.source-card-header .source-score {
+  margin-left: auto;
+}
+
+/* V1.1 新增：标题 + 类型徽章 + 点击提示 */
+.source-title {
+  margin-top: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e8f1ff;
+  overflow-wrap: anywhere;
+}
+
+.source-sub {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.source-kind-badge {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: rgba(100, 180, 255, 0.18);
+  color: #a8d7ff;
+  border: 1px solid rgba(100, 180, 255, 0.35);
+}
+
+.source-kind-badge.local {
+  background: rgba(120, 220, 160, 0.16);
+  color: #a6e4bd;
+  border-color: rgba(120, 220, 160, 0.32);
+}
+
+.source-link-hint {
+  font-size: 11px;
+  color: rgba(180, 210, 255, 0.75);
+}
+
+/* 来源卡片：hover 高亮 + 可点击 */
+.source-card:hover {
+  background: rgba(100, 140, 200, 0.10);
+  cursor: pointer;
 }
 
 .source-path {

@@ -1,0 +1,5 @@
+# Windows 批处理必须以 CRLF 存储：cmd 逐字节解析，LF 会导致脚本错乱。
+# 本仓库 core.autocrlf=true，若不锁定，.bat 会以 LF 入库，
+# 其他环境（autocrlf=false）克隆后脚本将无法运行。
+*.bat text eol=crlf
+*.cmd text eol=crlf

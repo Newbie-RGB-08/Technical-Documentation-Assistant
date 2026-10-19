@@ -64,3 +64,20 @@ def test_scan_single_tag_string(tmp_path):
     )
     files = scan_markdown_files(tmp_path)
     assert files[0]["tags"] == ["solo"]
+
+
+def test_scan_source_url_from_front_matter(tmp_path):
+    """爬虫落盘的 md 带 source_url front-matter，扫描器必须读出来。"""
+    fm = "---\ntitle: FastAPI 入门\nsource_url: https://fastapi.tiangolo.com/tutorial/\nsource_type: tech_doc\n---\n\n# body"
+    (tmp_path / "crawl.md").write_text(fm, encoding="utf-8")
+    files = scan_markdown_files(tmp_path, source_type="tech_doc")
+    assert len(files) == 1
+    assert files[0]["source_url"] == "https://fastapi.tiangolo.com/tutorial/"
+    assert files[0]["title"] == "FastAPI 入门"
+
+
+def test_scan_source_url_default_empty(tmp_path):
+    """没有 source_url front-matter 时返回空串（兜底）。"""
+    (tmp_path / "plain.md").write_text("# 纯笔记", encoding="utf-8")
+    files = scan_markdown_files(tmp_path)
+    assert files[0]["source_url"] == ""

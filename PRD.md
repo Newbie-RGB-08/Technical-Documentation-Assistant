@@ -453,7 +453,200 @@ npm run dev   # http://localhost:5173
 
 ---
 
-## 附录：长期演进备忘（非 V1 范围，仅记录决策依据）
+## 附录 B：V1.1 来源引用跳转优化方案
+
+> 触发日期 2026-10-19 · 状态：已确认方案，待实施
+> 优化目标：来源面板 `SourceCard` 点击后能正确打开原始出处
+> 覆盖范围：后端 metadata 链路打通 + 新增文件打开接口 + 前端 SourceCard 重构
+
+### B.1 问题背景
+
+V1 的来源面板只展示"文件绝对路径 / 章节 / 片段摘要"，点击无任何跳转行为。根本原因：
+
+| 环节 | 字段 | 现状 | 问题 |
+| --- | --- | --- | --- |
+| 爬虫落盘 | front-matter | ✅ 写了 `source_url` | 但后续链路没透传 |
+| `scan_markdown_files` | 返回结构 | 只读 title/tags/时间 | 漏掉 `source_url` |
+| chunk metadata | 写入 Chroma | 有 `file_path` / `source_type` / `title` / `heading_path` | 缺 `source_url` |
+| `build_sources` | SSE sources 下发 | 返回 `{index, file_path, heading_path, excerpt, score}` | 缺 url / source_type / title |
+| 前端 `SourceItem` | TS 类型 | 同上 | 缺 url 等 |
+| 前端 `SourceCard` | 渲染 | 原样显示绝对路径（纯文本） | 不可点 |
+
+浏览器 http 页面不能直接 `window.open("file://...")` 打开本地文件（Chrome/Edge 安全策略拦截），所以本地 md 必须由后端帮忙调起默认应用。
+
+### B.2 优化目标
+
+1. **网页来源可跳转**：`source_type = tech_doc` 且存在 `source_url` 时，点击 SourceCard → 新标签打开原始网页
+2. **本地 md 可打开**：`source_type = personal_note`（或 tech_doc 无 url）时，点击 SourceCard → 后端 `os.startfile()` 用默认应用打开 md
+3. **两种来源混合场景**：同一轮回答同时有网页与本地来源时，各自点击行为独立生效
+4. **安全约束**：后端打开接口限制只能打开 `data/notes/` 与 `data/tech_docs/` 下的 `.md` 文件
+
+### B.3 后端改动
+
+#### B.3.1 metadata 链路补齐 `source_url`
+
+| 文件 | 改动 |
+| --- | --- |
+| `backend/app/services/note_scanner.py:scan_markdown_files` | 返回结构加 `"source_url": str(fm.get("source_url") or "")` |
+| `backend/app/services/ingest_pipeline.py:prepare_chunks` | chunk metadata 加 `"source_url": file_record.get("source_url") or ""` |
+| `backend/app/services/ingest_pipeline.py:upsert_document` | 传入 `source_url` |
+
+> MySQL `documents` 表已有 `source_url TEXT NULL` 列（PRD 3.2.3 定义），无需改表结构。
+
+#### B.3.2 `build_sources` / `build_context` 补全字段
+
+```python
+def build_sources(chunks: list[dict]) -> list[dict]:
+    return [
+        {
+            "index": i + 1,
+            "title": c.get("metadata", {}).get("title", ""),
+            "file_path": c.get("metadata", {}).get("file_path", "未知"),
+            "heading_path": c.get("metadata", {}).get("heading_path", ""),
+            "source_type": c.get("metadata", {}).get("source_type", ""),
+            "source_url": c.get("metadata", {}).get("source_url", ""),
+            "excerpt": c["text"][:200],
+            "score": float(c.get("rerank_score", c.get("score", 0.0)) or 0.0),
+        }
+        for i, c in enumerate(chunks)
+    ]
+```
+
+`build_context` 给 LLM 的文件引用也带上 `source_url`，提升回答里 `[来源N]` 标注的可靠性。
+
+#### B.3.3 新增 `/api/files/open` 接口
+
+建议单独建 `backend/app/routers/files.py`：
+
+```python
+from fastapi import APIRouter, HTTPException, Query
+from pathlib import Path
+import os
+
+router = APIRouter(prefix="/api", tags=["files"])
+
+ALLOWED_ROOTS = ["data/notes", "data/tech_docs"]  # 白名单
+
+@router.get("/files/open")
+async def open_local_file(path: str = Query(..., description="绝对路径")):
+    p = Path(path).resolve()
+    if not p.exists():
+        raise HTTPException(404, f"文件不存在: {path}")
+    if p.suffix.lower() != ".md":
+        raise HTTPException(400, "只允许打开 .md 文件")
+    backend_root = Path(__file__).parent.parent.resolve()
+    ok = any(str(p).startswith(str(backend_root / r).replace("/", os.sep)) for r in ALLOWED_ROOTS)
+    if not ok:
+        raise HTTPException(403, "路径不在允许范围内")
+    try:
+        if os.name == "nt":
+            os.startfile(str(p))  # Windows 用默认应用打开
+        else:
+            import webbrowser
+            webbrowser.open(p.as_uri())
+    except Exception as e:
+        raise HTTPException(500, f"打开失败: {e}")
+    return {"ok": True, "path": str(p)}
+```
+
+#### B.3.4 重入库
+
+修改代码链路后，**已入库的 chunk metadata 不含 `source_url`**。执行一次 force_reingest 补齐：
+
+```bash
+curl -X POST http://localhost:8000/api/documents/ingest \
+     -H 'Content-Type: application/json' \
+     -d '{"directory":"data/notes","source_type":"personal_note","force_reingest":true}'
+curl -X POST http://localhost:8000/api/documents/ingest \
+     -H 'Content-Type: application/json' \
+     -d '{"directory":"data/tech_docs","source_type":"tech_doc","force_reingest":true}'
+```
+
+### B.4 前端改动
+
+#### B.4.1 类型升级
+
+```ts
+// frontend/src/types/chat.ts
+export interface SourceItem {
+  index: number;
+  title: string;          // 新增：简洁标题，优先显示
+  file_path: string;
+  heading_path: string;
+  source_type: string;    // "tech_doc" | "personal_note"
+  source_url: string;     // 新增：爬虫文档原始 URL（可为空）
+  excerpt: string;
+  score: number;
+}
+```
+
+#### B.4.2 SourceCard 重构
+
+**渲染层级（从上到下）**：
+
+```
+[1]  FastAPI 依赖注入笔记          ← title（优先）或文件名 stem
+    来源: 本地笔记 📄              ← source_type 徽章（两色区分）
+    或  来源: 网页文档 ↗ 点击跳转  ← tech_doc 且有 source_url 时显示
+    D:\...\ollama_ops.md           ← 完整文件路径（灰色小字）
+    / 使用 Depends / 常见坑         ← heading_path
+    片段摘要...                    ← excerpt
+```
+
+**点击分支**：
+
+```ts
+const handleClick = () => {
+  if (source.source_type === "tech_doc" && source.source_url) {
+    // 网页来源 → 新标签打开原始文章
+    window.open(source.source_url, "_blank", "noopener,noreferrer");
+  } else {
+    // 本地 md 或兜底 → 让后端用默认应用打开
+    fetch(`/api/files/open?path=${encodeURIComponent(source.file_path)}`);
+  }
+};
+```
+
+样式：可点击区域 `cursor: pointer` + hover 背景色；右下角加视觉图标（↗ 网页 / 📄 文件）。
+
+### B.5 改动文件清单
+
+| 文件 | 操作 |
+| --- | --- |
+| `backend/app/services/note_scanner.py` | 改（scan_markdown_files 返回加 source_url） |
+| `backend/app/services/ingest_pipeline.py` | 改（prepare_chunks + upsert_document 传递 source_url） |
+| `backend/app/services/rag_service.py` | 改（build_sources + build_context 补字段） |
+| `backend/app/routers/files.py` | 新建（/api/files/open 接口） |
+| `backend/tests/` | 补 3 个后端单测（链路字段完整性 + open 接口白名单校验） |
+| `frontend/src/types/chat.ts` | 改 SourceItem |
+| `frontend/src/components/SourceCard.tsx` | 改（渲染 + 点击分支） |
+| `frontend/src/styles.css` | 加徽章/图标样式 |
+| `frontend/src/components/SourceCard.test.tsx` | 新建 vitest（渲染分支 + 点击行为分支） |
+
+### B.6 验收标准（每条可测）
+
+| # | 场景 | 预期 |
+| --- | --- | --- |
+| 1 | 网页来源点击 | tech_doc 且有 source_url → 浏览器新标签打开原始网页 |
+| 2 | 本地 md 点击 | personal_note → 本机用默认应用打开 md |
+| 3 | 混合来源同答 | 同一轮回答同时有网页和本地来源 → 两种点击行为各自生效 |
+| 4 | 安全拦截 | 用 Postman 调 `/api/files/open?path=C:/Windows/System32/config/SAM` → 返回 403 |
+| 5 | 未知类型兜底 | source_type 缺失 → 降级走后端 open 接口，兜底能开 |
+| 6 | 已有对话不崩 | 新增字段均为可选默认值，历史对话 SourceCard 正常渲染 |
+
+### B.7 关键设计决策
+
+| 问题 | 决策 | 理由 |
+| --- | --- | --- |
+| 前端能否直接 `window.open(file://...)` | ❌ 不行 | 现代浏览器 http 页面被禁用 file:// 协议跳转，必须后端调起 |
+| `/api/files/open` 安全风险 | 可控 | 加白名单只允许 `data/notes/` 与 `data/tech_docs/` 下的 `.md`，禁止任意文件 |
+| title 从哪来 | chunk metadata 已有 title | prepare_chunks 写入，不用额外查库 |
+| 爬虫文档是否必须重入库 | 是 | 现有 Chroma chunk metadata 不含 source_url，force_reingest 一次补齐；后续新入库自动带上 |
+| 老对话历史 sources 能否升级 | 不行也不需要 | 老 sources 已落 SQLite 保持原样，新对话自动用新字段 |
+
+---
+
+## 附录 A：长期演进备忘（非 V1 范围，仅记录决策依据）
 
 - **ChromaDB 恶化信号阈值**：chunk > 10 万、单次检索 > 1 秒、内存 > 可用 RAM 70%、索引文件 > 预期 10 倍、Recall@5 < 50% —— 触发任一即启动迁移评估
 - **迁移路径**：ChromaDB → Qdrant（已有 VectorStore 抽象，只需新增 QdrantStore 实现）

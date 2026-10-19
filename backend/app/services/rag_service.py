@@ -42,9 +42,11 @@ def build_context(chunks: list[dict]) -> str:
     parts = []
     for i, c in enumerate(chunks):
         meta = c.get("metadata", {})
+        src = meta.get("source_url") or ""
+        src_line = f" | 网页来源：{src}" if src else ""
         parts.append(
             f"[来源{i + 1}] 文件：{meta.get('file_path', '未知')} | "
-            f"章节：{meta.get('heading_path', '')}\n{c['text']}"
+            f"章节：{meta.get('heading_path', '')}{src_line}\n{c['text']}"
         )
     return "\n\n".join(parts)
 
@@ -53,8 +55,11 @@ def build_sources(chunks: list[dict]) -> list[dict]:
     return [
         {
             "index": i + 1,
+            "title": c.get("metadata", {}).get("title", ""),
             "file_path": c.get("metadata", {}).get("file_path", "未知"),
             "heading_path": c.get("metadata", {}).get("heading_path", ""),
+            "source_type": c.get("metadata", {}).get("source_type", ""),
+            "source_url": c.get("metadata", {}).get("source_url", ""),
             "excerpt": c["text"][:200],
             "score": float(c.get("rerank_score", c.get("score", 0.0)) or 0.0),
         }

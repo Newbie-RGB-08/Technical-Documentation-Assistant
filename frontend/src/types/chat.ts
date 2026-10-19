@@ -1,7 +1,10 @@
 export interface SourceItem {
   index: number;
+  title?: string;          // V1.1 新增：简洁标题
   file_path: string;
-  heading_path: string;
+  heading_path?: string;
+  source_type?: string;    // V1.1 新增："tech_doc" | "personal_note"
+  source_url?: string;     // V1.1 新增：爬虫文档原始 URL
   excerpt: string;
   score: number;
 }
