@@ -6,20 +6,42 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import time
+import uuid
 from typing import AsyncIterator
 
+from app.config import get_settings
+from app.core.complexity_router import (
+    classify_complexity,
+    route_for_complexity,
+    score_complexity,
+)
 from app.core.confidence import (
-    CONFIDENCE_HIGH,
-    DISCLAIMER,
     INCOMPLETE_NOTICE,
     build_fallback_preamble,
     classify_fallback,
 )
+from app.core.evidence import (
+    Answerability,
+    build_evidence_pack,
+    fit_context_chunks,
+)
+from app.core.fallback_ladder import FallbackLevel, fallback_message
+from app.core.input_guard import validate_question
 from app.core.query_rewriter import rewrite_query
 from app.core.retrieval_scorer import RetrievalScorer, decide_level
 from app.core.question_scorer import QuestionScorer
+from app.services.answer_pipeline import (
+    AnswerResult,
+    classify_specificity,
+    run_general_stream,
+    run_strict_pipeline,
+)
+from app.services.retrieval_orchestrator import orchestrate
+from app.services.web_writeback import normalize_url
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +143,12 @@ def _build_card(members: list[tuple[int, dict]], max_excerpts: int) -> dict:
         for _, chunk in members
     )
     rep_heading = str(first_meta.get("heading_path") or "").strip()
+    origin = str(first_meta.get("origin") or "").strip()
+    if not origin:
+        origin = "web_search" if first_meta.get("source_url") else "local"
+    trust_level = str(first_meta.get("trust_level") or "").strip()
+    if not trust_level:
+        trust_level = "web_medium" if origin == "web_search" else "local_high"
 
     return {
         "index": first_idx,
@@ -132,6 +160,9 @@ def _build_card(members: list[tuple[int, dict]], max_excerpts: int) -> dict:
         "headings": headings,
         "source_type": first_meta.get("source_type", ""),
         "source_url": first_meta.get("source_url", ""),
+        "origin": origin,
+        "retrieved_at": first_meta.get("retrieved_at", ""),
+        "trust_level": trust_level,
         "excerpt": excerpts[0] if excerpts else "",
         "excerpts": excerpts,
         "score": score,
@@ -195,6 +226,9 @@ def merge_chunks_to_sources(chunks: list[dict], max_excerpts: int = MAX_EXCERPTS
                     "headings": merged_headings,
                     "source_type": "personal_note",  # 本地优先
                     "source_url": tech["source_url"],  # 网页 URL
+                    "origin": "hybrid",
+                    "retrieved_at": tech.get("retrieved_at", ""),
+                    "trust_level": "local_high",
                     "is_hybrid": True,
                     "excerpt": merged_excerpts[0] if merged_excerpts else "",
                     "excerpts": merged_excerpts,
@@ -220,6 +254,32 @@ def build_sources(chunks: list[dict]) -> list[dict]:
     return merge_chunks_to_sources(chunks)
 
 
+def _record_trace(state, trace: dict, started: float) -> None:
+    store = getattr(state, "session_store", None)
+    if store is None or not hasattr(store, "add_retrieval_trace"):
+        return
+    try:
+        store.add_retrieval_trace(
+            trace.get("session_id") or "",
+            request_id=trace.get("request_id"),
+            question=trace.get("question") or "",
+            complexity=trace.get("complexity"),
+            route=trace.get("route"),
+            local_level=trace.get("local_level"),
+            web_used=bool(trace.get("web_used")),
+            web_urls=list(trace.get("web_urls") or []),
+            answer_status=trace.get("answer_status"),
+            verified=bool(trace.get("verified")),
+            fallback_level=trace.get("fallback_level"),
+            kb_written=bool(trace.get("kb_written")),
+            elapsed_ms=trace.get("elapsed_ms") or _elapsed_ms(started),
+            interrupted=bool(trace.get("interrupted")),
+            error=trace.get("error"),
+        )
+    except Exception as exc:  # noqa: BLE001 - trace 失败不影响回答
+        logger.warning("记录检索 trace 失败: %s", exc)
+
+
 async def chat_flow(
     state,
     question: str,
@@ -227,27 +287,135 @@ async def chat_flow(
     top_k: int = 5,
     model_id: str | None = None,
 ) -> AsyncIterator[tuple[str, dict]]:
-    """主对话流程，yield (event_type, data)。"""
-    session_store = state.session_store
-    history = session_store.get_history(session_id, limit=REWRITE_HISTORY_TURNS * 2)
+    """主对话流程：生成 request_id、记录 trace，并在中断时标记 interrupted。"""
+    request_id = uuid.uuid4().hex
+    started = time.monotonic()
+    trace = {
+        "session_id": session_id,
+        "request_id": request_id,
+        "question": str(question or ""),
+        "complexity": None,
+        "route": None,
+        "local_level": None,
+        "web_used": False,
+        "web_urls": [],
+        "answer_status": "pending",
+        "verified": False,
+        "fallback_level": None,
+        "kb_written": False,
+        "elapsed_ms": 0,
+        "interrupted": False,
+        "error": None,
+    }
 
-    # 0. meta
+    try:
+        async for event_type, data in _chat_flow_inner(
+            state,
+            question=question,
+            session_id=session_id,
+            top_k=top_k,
+            model_id=model_id,
+            request_id=request_id,
+            trace=trace,
+        ):
+            if event_type == "meta":
+                if data.get("complexity"):
+                    trace["complexity"] = data["complexity"]
+                if data.get("route"):
+                    trace["route"] = data["route"]
+                data.setdefault("request_id", request_id)
+            elif event_type == "status":
+                if data.get("stage") == "local_retrieval" and data.get("level") is not None:
+                    trace["local_level"] = int(data["level"])
+            elif event_type == "sources":
+                urls = [
+                    str(card.get("source_url"))
+                    for card in data
+                    if isinstance(card, dict) and card.get("source_url")
+                ]
+                if urls:
+                    trace["web_urls"] = urls
+                    trace["web_used"] = True
+            elif event_type == "done":
+                trace["answer_status"] = data.get("answer_status") or trace["answer_status"]
+                trace["verified"] = bool(data.get("verified"))
+                trace["fallback_level"] = data.get("fallback_level")
+                trace["kb_written"] = bool(data.get("kb_written"))
+                trace["elapsed_ms"] = data.get("elapsed_ms") or _elapsed_ms(started)
+                data.setdefault("request_id", request_id)
+                data.setdefault("interrupted", False)
+            yield event_type, data
+    except (asyncio.CancelledError, GeneratorExit):
+        trace["interrupted"] = True
+        if trace["answer_status"] in ("pending", None):
+            trace["answer_status"] = "interrupted"
+        raise
+    except Exception as exc:  # noqa: BLE001 - 上层路由会转 error 事件
+        trace["error"] = str(exc)
+        if trace["answer_status"] in ("pending", None):
+            trace["answer_status"] = "error"
+        raise
+    finally:
+        _record_trace(state, trace, started)
+
+
+async def _chat_flow_inner(
+    state,
+    *,
+    question: str,
+    session_id: str,
+    top_k: int,
+    model_id: str | None,
+    request_id: str,
+    trace: dict,
+) -> AsyncIterator[tuple[str, dict]]:
+    """主对话流程，yield (event_type, data)。"""
+    settings = get_settings()
+    started = time.monotonic()
+    question = str(question or "")
+    session_store = state.session_store
+    history = session_store.get_history(
+        session_id,
+        limit=REWRITE_HISTORY_TURNS * 2,
+        verified_only=settings.session_history_verified_only,
+    )
+
+    # 0. 输入防线：空/超长问题直接给出结构化错误，不进入检索
+    input_check = validate_question(question, settings.max_question_chars)
+    if not input_check.ok:
+        yield "error", {"code": input_check.code, "message": input_check.message,
+                        "suggestion": "请修改问题后重试。"}
+        yield "done", {"session_id": session_id, "answer_status": "refused",
+                       "elapsed_ms": _elapsed_ms(started)}
+        return
+
+    # 0.1 meta（拿到复杂度后再补一次完整 meta）
     yield "meta", {
         "model": state.gateway.current_model or "auto",
         "provider": state.gateway.current_provider or "auto",
         "task_type": "generate",
+        "complexity": None,
+        "route": None,
+        "answer_mode": settings.answer_mode,
+        "web_enabled": settings.web_search_enabled,
+        "request_id": request_id,
     }
 
     # 0.5 敏感/越狱问题优先拒答，避免被低提问分误入人工确认流程
     if classify_fallback(question) == "sensitive":
         preamble = build_fallback_preamble("sensitive")
         yield "content", {"text": preamble}
-        session_store.add_message(session_id, "user", question)
-        session_store.add_message(session_id, "assistant", preamble)
-        yield "done", {"session_id": session_id, "fallback": "sensitive"}
+        session_store.add_message(session_id, "user", question, request_id=request_id)
+        session_store.add_message(
+            session_id, "assistant", preamble,
+            answer_status="refused", request_id=request_id,
+        )
+        yield "done", {"session_id": session_id, "fallback": "sensitive",
+                       "answer_status": "refused", "elapsed_ms": _elapsed_ms(started)}
         return
 
     # 1. 提问信息评分
+    yield "status", {"stage": "scoring"}
     q_score = state.question_scorer.score(question, history=history)
     session_store.add_score_log(session_id, question, q_score=q_score, r_score=None,
                                 level=None, confidence=None, model=None)
@@ -260,102 +428,302 @@ async def chat_flow(
             "rewritten_question": rewritten,
             "options": ["确认", "修改", "记录此问题"],
         }
+        trace["answer_status"] = "confirm"
         return
 
     # 2. 问题改写
     rewritten = await rewrite_query(state.gateway, question, history)
 
-    # 3. 检索策略评分定级
+    # 3. 复杂度评分与检索路由（PRD E.3）
     r_score = state.retrieval_scorer.score(rewritten)
-    level = decide_level(r_score)
+    keyword_weights = getattr(state.retrieval_scorer, "keyword_weights", {})
+    complexity_score = score_complexity(rewritten, keyword_weights, history)
+    complexity = classify_complexity(complexity_score)
+    route = route_for_complexity(complexity, r_score)
+    level = max(route.local_level, decide_level(r_score))
 
-    # 4. 带降级的分级检索
-    chunks, used_level, confidence = state.retriever.retrieve_with_fallback(
-        rewritten, level=level, top_k=top_k
+    yield "meta", {
+        "model": state.gateway.current_model or "auto",
+        "provider": state.gateway.current_provider or "auto",
+        "task_type": "generate",
+        "complexity": complexity,
+        "complexity_score": complexity_score,
+        "route": route.web_strategy,
+        "answer_mode": settings.answer_mode,
+        "web_enabled": settings.web_search_enabled,
+        "request_id": request_id,
+    }
+    yield "status", {"stage": "local_retrieval", "complexity": complexity, "level": level}
+
+    # 4. 检索编排：本地 / 线上（复杂题并行，简单/中等未命中时升级）；写回在 P4 接入
+    web_gateway = getattr(state, "web_gateway", None)
+    web_fetcher = getattr(state, "web_fetcher", None)
+    if route.web_strategy == "parallel" and web_gateway is not None:
+        yield "status", {"stage": "web_searching"}
+
+    outcome = await orchestrate(
+        rewritten,
+        local_retriever=state.retriever.retrieve_with_fallback,
+        complexity=complexity,
+        route=route.web_strategy,
+        top_k=top_k,
+        level=level,
+        web_gateway=web_gateway,
+        fetcher=web_fetcher,
+        reranker=getattr(state.retriever, "reranker", None),
     )
+    chunks = outcome.chunks
+    used_level = outcome.level
+    confidence = outcome.confidence
+    if outcome.web_used:
+        yield "status", {"stage": "web_fetching", "web_chunks": len(outcome.web_chunks)}
+
     session_store.add_score_log(
         session_id, rewritten, q_score=q_score, r_score=r_score,
         level=used_level, confidence=confidence,
         model=state.gateway.current_model,
     )
 
-    # 5. 兜底
-    if not chunks or confidence < 0.3:
-        kind = classify_fallback(question)
-        preamble = build_fallback_preamble(kind)
-        if kind == "general":
-            yield "content", {"text": DISCLAIMER + "\n\n"}
-            answer = await _llm_answer_without_context(state, rewritten, model_id)
-            async for token in _stream_text(answer):
-                yield "content", {"text": token}
-        else:
-            yield "content", {"text": preamble}
-        session_store.add_message(session_id, "user", question)
-        session_store.add_message(session_id, "assistant", preamble)
-        yield "done", {"session_id": session_id, "fallback": kind}
+    # 5. 证据充足性门（PRD E.5）
+    answerability = outcome.answerability
+
+    if answerability in (Answerability.HIT, Answerability.PARTIAL):
+        async for event in _strict_answer(
+            state, settings=settings, question=question, rewritten=rewritten,
+            chunks=chunks, answerability=answerability, session_id=session_id,
+            model_id=model_id, used_level=used_level, confidence=confidence,
+            started=started, pages=outcome.pages, request_id=request_id,
+        ):
+            yield event
         return
 
-    # 5.5 中置信（0.3~0.6）但属通用常识问题：检索结果实际不相关，
-    # 不能把无关片段当来源，改为“未基于本地知识库”声明后自答
-    if confidence < CONFIDENCE_HIGH and classify_fallback(question) == "general":
-        yield "content", {"text": DISCLAIMER + "\n\n"}
-        answer = await _llm_answer_without_context(state, rewritten, model_id)
-        async for token in _stream_text(answer):
-            yield "content", {"text": token}
-        session_store.add_message(session_id, "user", question)
-        session_store.add_message(session_id, "assistant", DISCLAIMER + "\n\n" + answer)
-        yield "done", {"session_id": session_id, "fallback": "general", "confidence": confidence}
+    if answerability == Answerability.STALE:
+        # 线上可用时由 P3 编排刷新；当前先显式提示时效并走严格管道
+        async for event in _strict_answer(
+            state, settings=settings, question=question, rewritten=rewritten,
+            chunks=chunks, answerability=answerability, session_id=session_id,
+            model_id=model_id, used_level=used_level, confidence=confidence,
+            started=started, stale_notice=True, pages=outcome.pages,
+            request_id=request_id,
+        ):
+            yield event
         return
 
-    # 6. sources
+    # 6. 本地未命中：按问题具体性决定通用流式或明确未找到（PRD E.4）
+    async for event in _no_evidence_answer(
+        state, settings=settings, question=question, rewritten=rewritten,
+        session_id=session_id, model_id=model_id, started=started,
+        request_id=request_id,
+    ):
+        yield event
+
+
+def _cited_web_pages(
+    result: AnswerResult,
+    evidence,
+    chunks: list[dict],
+    pages: list,
+) -> list[tuple[object, float]]:
+    """严格管道实际引用（含摘录兜底）且属于线上的网页，按首次引用去重。"""
+    if not pages or not result.used_indices:
+        return []
+    page_map: dict[str, object] = {}
+    for page in pages:
+        page_map[page.url] = page
+        canonical = normalize_url(page.url)
+        if canonical:
+            page_map[canonical] = page
+
+    cited: list[tuple[object, float]] = []
+    seen: set[int] = set()
+    for index in result.used_indices:
+        item = evidence.get(index)
+        if item is None or item.origin != "web_search":
+            continue
+        url = item.source_url
+        page = page_map.get(url) or page_map.get(normalize_url(url))
+        if page is None or id(page) in seen:
+            continue
+        chunk = chunks[index - 1] if 0 < index <= len(chunks) else {}
+        relevance = float(chunk.get("score", 0.0) or 0.0)
+        seen.add(id(page))
+        cited.append((page, relevance))
+    return cited
+
+
+async def _strict_answer(
+    state,
+    *,
+    settings,
+    question: str,
+    rewritten: str,
+    chunks: list[dict],
+    answerability: Answerability,
+    session_id: str,
+    model_id: str | None,
+    used_level: int,
+    confidence: float,
+    started: float,
+    stale_notice: bool = False,
+    pages: list | None = None,
+    request_id: str = "",
+) -> AsyncIterator[tuple[str, dict]]:
+    """有证据时的严格管道：缓冲生成 → 校验 → 修复 → 摘录 → 打字机输出。"""
+    chunks = fit_context_chunks(chunks, settings.max_context_chars)
     sources = build_sources(chunks)
     yield "sources", sources
 
-    # 7. 流式生成（中置信附加提示）
-    if confidence < CONFIDENCE_HIGH:
+    yield "status", {"stage": "generating", "answerability": answerability.value}
+    yield "status", {"stage": "verifying"}
+    evidence = build_evidence_pack(chunks)
+
+    # 管道内部可能触发一次修复；用状态队列在等待期间实时透出 repairing
+    status_queue: asyncio.Queue = asyncio.Queue()
+    task = asyncio.create_task(
+        run_strict_pipeline(
+            state.gateway, rewritten, evidence, model_id,
+            on_status=status_queue.put_nowait,
+        )
+    )
+    getter = asyncio.create_task(status_queue.get())
+    try:
+        while True:
+            done, _pending = await asyncio.wait(
+                {task, getter}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if getter in done:
+                yield "status", {"stage": getter.result()}
+                getter = asyncio.create_task(status_queue.get())
+            if task in done:
+                break
+        result = task.result()
+    except asyncio.CancelledError:
+        task.cancel()
+        raise
+    except Exception as exc:  # noqa: BLE001 - 工具异常不暴露原始堆栈
+        logger.warning("严格管道异常，降级为未找到: %s", exc)
+        result = AnswerResult(
+            text=fallback_message(FallbackLevel.L4_REFUSED),
+            status="refused",
+            fallback_level=int(FallbackLevel.L4_REFUSED),
+        )
+    finally:
+        if not getter.done():
+            getter.cancel()
+
+    if stale_notice:
+        yield "content", {"text": "以下资料可能已超过时效，请结合官方文档核对。\n\n"}
+    elif answerability == Answerability.PARTIAL:
         yield "content", {"text": INCOMPLETE_NOTICE + "\n\n"}
 
-    answer_parts: list[str] = []
-    async for token in _generate_streaming(state, rewritten, chunks, model_id):
-        answer_parts.append(token)
+    async for token in _stream_text(result.text):
         yield "content", {"text": token}
 
-    session_store.add_message(session_id, "user", question)
-    session_store.add_message(session_id, "assistant", "".join(answer_parts), sources=sources,
-                              model=state.gateway.current_model)
-    yield "done", {"session_id": session_id, "level": used_level, "confidence": confidence}
+    state.session_store.add_message(session_id, "user", question, request_id=request_id)
+    state.session_store.add_message(
+        session_id, "assistant", result.text, sources=sources,
+        model=state.gateway.current_model,
+        answer_status=result.status, request_id=request_id,
+    )
+
+    # 实际引用且通过质量门的网页投入后台写回队列，不阻塞首 Token
+    kb_written = False
+    cited = _cited_web_pages(result, evidence, chunks, pages or [])
+    queue = getattr(state, "writeback_queue", None)
+    if cited and queue is not None:
+        yield "status", {"stage": "writing_back", "pages": len(cited)}
+        limit = max(0, int(settings.web_writeback_max_pages_per_turn))
+        for page, relevance in cited[:limit]:
+            if queue.put({"page": page, "query": rewritten, "relevance": relevance}):
+                kb_written = True
+
+    yield "done", {
+        "session_id": session_id,
+        "level": used_level,
+        "confidence": confidence,
+        "answer_status": result.status,
+        "verified": result.verified,
+        "fallback_level": result.fallback_level,
+        "kb_written": kb_written,
+        "elapsed_ms": _elapsed_ms(started),
+    }
+
+
+async def _no_evidence_answer(
+    state,
+    *,
+    settings,
+    question: str,
+    rewritten: str,
+    session_id: str,
+    model_id: str | None,
+    started: float,
+    request_id: str = "",
+) -> AsyncIterator[tuple[str, dict]]:
+    """无本地证据：宽泛概念走通用流式，具体问题禁止自答。"""
+    specificity = classify_specificity(rewritten)
+    general_allowed = (
+        settings.general_stream_enabled
+        and settings.answer_mode != "strict"
+        and (
+            not settings.general_stream_requires_concept_only
+            or specificity == "concept"
+        )
+    )
+
+    if general_allowed:
+        yield "status", {"stage": "general_streaming", "specificity": specificity}
+        result: AnswerResult | None = None
+        async for item in run_general_stream(state.gateway, rewritten, model_id):
+            if item["event"] == "token":
+                yield "content", {"text": item["text"]}
+            else:
+                result = item["result"]
+        if result is None:  # pragma: no cover - 生成器契约保证有 done
+            result = AnswerResult(
+                text=fallback_message(FallbackLevel.L4_REFUSED),
+                status="refused",
+                fallback_level=int(FallbackLevel.L4_REFUSED),
+            )
+        state.session_store.add_message(session_id, "user", question, request_id=request_id)
+        state.session_store.add_message(
+            session_id, "assistant", result.text, model=state.gateway.current_model,
+            answer_status=result.status, request_id=request_id,
+        )
+        yield "done", {
+            "session_id": session_id,
+            "answer_status": result.status,
+            "verified": False,
+            "fallback_level": result.fallback_level,
+            "kb_written": False,
+            "elapsed_ms": _elapsed_ms(started),
+        }
+        return
+
+    # 具体 API/版本/错误码/命令问题：禁止通用自答
+    text = fallback_message(FallbackLevel.L4_REFUSED)
+    yield "content", {"text": text}
+    state.session_store.add_message(session_id, "user", question, request_id=request_id)
+    state.session_store.add_message(
+        session_id, "assistant", text, model=state.gateway.current_model,
+        answer_status="refused", request_id=request_id,
+    )
+    yield "done", {
+        "session_id": session_id,
+        "answer_status": "refused",
+        "verified": False,
+        "fallback_level": int(FallbackLevel.L4_REFUSED),
+        "kb_written": False,
+        "elapsed_ms": _elapsed_ms(started),
+    }
+
+
+def _elapsed_ms(started: float) -> int:
+    return int((time.monotonic() - started) * 1000)
 
 
 async def _stream_text(text: str) -> AsyncIterator[str]:
-    # 非流式兜底回答按小块"打字机"输出
+    # 严格管道校验通过后按小块"打字机"输出
     step = 24
     for i in range(0, len(text), step):
         yield text[i : i + step]
-
-
-async def _llm_answer_without_context(state, question: str, model_id: str | None) -> str:
-    """通用技术常识的声明式自答（无知识库上下文）。"""
-    try:
-        answer = await state.gateway.chat(
-            messages=[{"role": "user", "content": question}],
-            task_type="generate",
-            model_id=model_id,
-        )
-        return answer
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("兜底自答失败: %s", exc)
-        return "（模型服务暂不可用，请稍后再试）"
-
-
-async def _generate_streaming(state, query: str, chunks: list[dict], model_id: str | None):
-    """带知识库上下文的流式生成。"""
-    context = build_context(chunks)
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT.format(context=context)},
-        {"role": "user", "content": query},
-    ]
-    # 生成异常不向内容流拼接错误文本，交给 SSE 顶层产出 error 事件
-    stream = await state.gateway.chat(messages, task_type="generate", stream=True,
-                                      model_id=model_id)
-    async for token in stream:
-        yield token

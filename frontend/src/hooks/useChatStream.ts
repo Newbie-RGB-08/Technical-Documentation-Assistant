@@ -2,11 +2,13 @@ import { useCallback, useMemo, useReducer, useRef, useState } from "react";
 import { postFeedback, streamChat } from "../api/client";
 import type { ParsedSSE } from "../api/sse";
 import type {
+  AnswerStatus,
   ChatMessage,
   ConfirmPayload,
   DonePayload,
   MetaPayload,
   SourceItem,
+  StatusPayload,
 } from "../types/chat";
 import { confirmReducer, initialConfirmState } from "./confirmMachine";
 
@@ -23,11 +25,13 @@ export function useChatStream(modelId: string | null) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [streaming, setStreaming] = useState(false);
+  const [stage, setStage] = useState<string | null>(null);
   const [confirmPayload, setConfirmPayload] = useState<ConfirmPayload | null>(null);
   const [confirmState, dispatchConfirm] = useReducer(confirmReducer, initialConfirmState);
 
   const sessionIdRef = useRef<string>(crypto.randomUUID());
   const abortRef = useRef<AbortController | null>(null);
+  const lastQuestionRef = useRef<string>("");
 
   const patchMessage = useCallback((id: string, patch: Partial<ChatMessage>) => {
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
@@ -39,7 +43,9 @@ export function useChatStream(modelId: string | null) {
       if (!text || streaming) return;
       setError(null);
       setNotice(null);
+      setStage(null);
       setConfirmPayload(null);
+      lastQuestionRef.current = text;
 
       const assistantId = uid("a");
       const userMsg: ChatMessage = { id: uid("u"), role: "user", content: text };
@@ -48,6 +54,8 @@ export function useChatStream(modelId: string | null) {
         role: "assistant",
         content: "",
         pending: true,
+        answer_status: "pending",
+        interrupted: false,
       };
       setMessages((prev) => [...prev, userMsg, assistantMsg]);
       setStreaming(true);
@@ -59,6 +67,11 @@ export function useChatStream(modelId: string | null) {
           case "meta":
             setMeta(data as MetaPayload);
             break;
+          case "status": {
+            const payload = data as StatusPayload;
+            setStage(payload.stage ?? null);
+            break;
+          }
           case "sources": {
             const items = data as SourceItem[];
             setSources(items);
@@ -86,12 +99,19 @@ export function useChatStream(modelId: string | null) {
             patchMessage(assistantId, {
               pending: false,
               error: String(data.message ?? "未知错误"),
+              answer_status: "error",
             });
             break;
           case "done": {
             const done = data as DonePayload;
             if (done.session_id) sessionIdRef.current = done.session_id;
-            patchMessage(assistantId, { pending: false });
+            patchMessage(assistantId, {
+              pending: false,
+              answer_status: (done.answer_status as AnswerStatus) ?? "verified",
+              interrupted: Boolean(done.interrupted),
+              request_id: done.request_id,
+            });
+            setStage(null);
             setStreaming(false);
             break;
           }
@@ -112,9 +132,16 @@ export function useChatStream(modelId: string | null) {
         if ((exc as Error).name !== "AbortError") {
           const message = (exc as Error).message || "对话失败";
           setError(message);
-          patchMessage(assistantId, { pending: false, error: message });
+          patchMessage(assistantId, {
+            pending: false,
+            error: message,
+            answer_status: "error",
+          });
+        } else {
+          patchMessage(assistantId, { pending: false, interrupted: true, answer_status: "interrupted" });
         }
       } finally {
+        setStage(null);
         setStreaming(false);
         abortRef.current = null;
       }
@@ -124,11 +151,28 @@ export function useChatStream(modelId: string | null) {
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
+    setStage(null);
     setStreaming(false);
     setMessages((prev) =>
-      prev.map((m) => (m.pending ? { ...m, pending: false, content: m.content || "（已停止）" } : m)),
+      prev.map((m) =>
+        m.pending
+          ? {
+              ...m,
+              pending: false,
+              interrupted: true,
+              answer_status: "interrupted",
+              content: m.content || "（已停止）",
+            }
+          : m,
+      ),
     );
   }, []);
+
+  const retry = useCallback(() => {
+    const question = lastQuestionRef.current;
+    if (!question || streaming) return;
+    void send(question);
+  }, [send, streaming]);
 
   const openCitation = useCallback((index: number) => {
     setActiveSource(index);
@@ -167,10 +211,12 @@ export function useChatStream(modelId: string | null) {
       error,
       notice,
       streaming,
+      stage,
       confirmPayload,
       sessionId: sessionIdRef.current,
       send,
       stop,
+      retry,
       openCitation,
       setPanelOpen,
       setActiveSource,
@@ -190,9 +236,11 @@ export function useChatStream(modelId: string | null) {
       error,
       notice,
       streaming,
+      stage,
       confirmPayload,
       send,
       stop,
+      retry,
       openCitation,
       submitConfirm,
       recordConfirm,

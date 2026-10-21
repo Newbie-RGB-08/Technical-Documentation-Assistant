@@ -62,6 +62,11 @@ export default function SourceCard({ source, active, onClick }: Props) {
   const basename = source.file_path.split(/[\\/]/).pop() || source.file_path;
   const sourceKindLabel = source.source_type === "tech_doc" ? "网页文档" : "本地笔记";
 
+  // V1.4：联网来源徽章与抓取时间（旧数据按类型推导）
+  const origin = source.origin ?? (isHybrid ? "hybrid" : isWebSource ? "web_search" : "local");
+  const isOnline = origin === "web_search" || origin === "hybrid";
+  const fetchedDate = (source.retrieved_at ?? "").match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? "";
+
   return (
     <div
       role="button"
@@ -84,6 +89,10 @@ export default function SourceCard({ source, active, onClick }: Props) {
         <span className={`source-kind-badge ${isWebSource && !isHybrid ? "web" : "local"}`}>
           {sourceKindLabel}
         </span>
+        {isOnline && <span className="source-origin-badge web">联网检索</span>}
+        {fetchedDate && (
+          <span className="source-fetched-at">抓取于 {fetchedDate}</span>
+        )}
         <span className="source-score">{source.score.toFixed(3)}</span>
       </div>
       <div className="source-title">{displayTitle}</div>

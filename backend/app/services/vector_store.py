@@ -114,3 +114,29 @@ class ChromaStore(VectorStore):
 
     def count(self, source_type: str) -> int:
         return self._collection(source_type).count()
+
+    def get_chunks_by_source_url(self, source_url: str) -> list[dict]:
+        """按 source_url 取回全部已入库片段（网页写回去重/复用）。"""
+        url = str(source_url or "").strip()
+        if not url:
+            return []
+        results: list[dict] = []
+        with self._lock:
+            for st in _COLLECTIONS:
+                col = self._collection(st)
+                if col.count() == 0:
+                    continue
+                data = col.get(where={"source_url": url})
+                ids = data.get("ids") or []
+                documents = data.get("documents") or []
+                metadatas = data.get("metadatas") or []
+                for i, chunk_id in enumerate(ids):
+                    results.append(
+                        {
+                            "id": chunk_id,
+                            "text": documents[i] if i < len(documents) else "",
+                            "metadata": metadatas[i] if i < len(metadatas) else {},
+                            "source_type": st,
+                        }
+                    )
+        return results

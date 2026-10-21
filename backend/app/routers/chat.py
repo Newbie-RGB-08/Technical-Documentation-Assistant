@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 
@@ -14,6 +15,13 @@ from app.models.schemas import ChatRequest
 from app.services.rag_service import chat_flow
 
 router = APIRouter(prefix="/api/chat")
+
+# 同会话串行：避免两次请求互相污染历史与写回队列
+_SESSION_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _session_lock(session_id: str) -> asyncio.Lock:
+    return _SESSION_LOCKS.setdefault(session_id, asyncio.Lock())
 
 
 def sse_event(event_type: str, data) -> str:
@@ -27,18 +35,55 @@ async def chat_stream(req: ChatRequest, request: Request):
     session_id = req.session_id or str(uuid.uuid4())
 
     async def event_generator():
-        try:
-            async for event_type, data in chat_flow(
-                app_state,
-                question=req.question,
-                session_id=session_id,
-                top_k=req.top_k,
-                model_id=req.model_id,
-            ):
-                yield sse_event(event_type, data)
-        except Exception as exc:  # noqa: BLE001 - 顶层异常转 error 事件
-            yield sse_event("error", {"code": "internal_error", "message": str(exc)})
-            yield sse_event("done", {"session_id": session_id})
+        lock = _session_lock(session_id)
+        if lock.locked():
+            yield sse_event(
+                "error",
+                {
+                    "code": "E_SESSION_BUSY",
+                    "message": "该会话正在处理上一条提问。",
+                    "suggestion": "请等待当前回答完成后再提问。",
+                },
+            )
+            yield sse_event(
+                "done",
+                {
+                    "session_id": session_id,
+                    "answer_status": "error",
+                    "interrupted": True,
+                },
+            )
+            return
+
+        async with lock:
+            try:
+                async for event_type, data in chat_flow(
+                    app_state,
+                    question=req.question,
+                    session_id=session_id,
+                    top_k=req.top_k,
+                    model_id=req.model_id,
+                ):
+                    yield sse_event(event_type, data)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - 顶层异常转 error 事件
+                yield sse_event(
+                    "error",
+                    {
+                        "code": "E_INTERNAL",
+                        "message": str(exc) or "服务内部错误",
+                        "suggestion": "请重试；若持续失败请查看后端日志。",
+                    },
+                )
+                yield sse_event(
+                    "done",
+                    {
+                        "session_id": session_id,
+                        "answer_status": "error",
+                        "interrupted": False,
+                    },
+                )
 
     return StreamingResponse(
         event_generator(),
