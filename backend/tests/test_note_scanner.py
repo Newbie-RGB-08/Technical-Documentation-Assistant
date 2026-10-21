@@ -1,5 +1,12 @@
 """阶段 1 测试：本地 Markdown 笔记扫描（PRD 3.1.2）。"""
-from app.services.note_scanner import parse_front_matter, scan_markdown_files
+from pathlib import Path
+
+from app.config import BACKEND_DIR
+from app.services.note_scanner import (
+    normalize_file_path,
+    parse_front_matter,
+    scan_markdown_files,
+)
 
 NOTE_WITH_FM = """---
 title: ChromaDB 入门
@@ -81,3 +88,15 @@ def test_scan_source_url_default_empty(tmp_path):
     (tmp_path / "plain.md").write_text("# 纯笔记", encoding="utf-8")
     files = scan_markdown_files(tmp_path)
     assert files[0]["source_url"] == ""
+
+
+def test_normalize_file_path_under_backend_is_relative_posix():
+    """backend 目录内路径统一为 data/... 形式，避免绝对/相对路径重复入库。"""
+    absolute = BACKEND_DIR / "data" / "notes" / "chroma.md"
+    assert normalize_file_path(absolute) == "data/notes/chroma.md"
+    assert normalize_file_path(str(absolute)) == "data/notes/chroma.md"
+
+
+def test_normalize_file_path_outside_backend_uses_posix():
+    outside = Path("C:/temp/notes/other.md")
+    assert normalize_file_path(outside) == "C:/temp/notes/other.md"

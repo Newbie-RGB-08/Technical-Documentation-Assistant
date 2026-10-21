@@ -157,6 +157,73 @@ async def test_status_meta_sources_done_fields(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_done_exposes_used_indices_for_cited_sources(tmp_path):
+    """done.used_indices 必须透出正文实际引用的来源编号，供前端标记已引用。"""
+    gateway = FakeGateway(answer="ChromaDB 的 PersistentClient 通过持久化路径启动。[来源1]")
+    state = FakeState(tmp_path, HIT_CHUNKS, gateway=gateway)
+
+    events = await _run(state)
+
+    done = _last(events, "done")
+    assert done["used_indices"] == [1]
+    sources = _last(events, "sources")
+    assert sources[0]["indices"] == [1]
+
+
+@pytest.mark.asyncio
+async def test_done_used_indices_cover_extractive_fallback(tmp_path):
+    """降级为摘录兜底时，摘录用到的证据同样要标记为已引用。"""
+    gateway = FakeGateway(
+        answers=["这个工具非常容易使用。", "这个工具非常容易使用。"]
+    )
+    state = FakeState(tmp_path, HIT_CHUNKS, gateway=gateway)
+
+    events = await _run(state)
+
+    done = _last(events, "done")
+    assert done["answer_status"] == "extractive"
+    assert done["used_indices"] == [1]
+
+
+@pytest.mark.asyncio
+async def test_no_evidence_done_has_no_used_indices(tmp_path):
+    """无来源回答不应伪造 used_indices。"""
+    state = FakeState(tmp_path, [], gateway=FakeGateway(answer="不应调用模型"))
+
+    events = await _run(state, question="ChromaDB 的 PersistentClient 如何启动？")
+
+    done = _last(events, "done")
+    assert "used_indices" not in done
+    assert _last(events, "sources") is None
+
+
+@pytest.mark.asyncio
+async def test_done_exposes_verification_summary(tmp_path):
+    """done.verification 必须透出结构化校验摘要，便于前端/日志定位降级原因。"""
+    gateway = FakeGateway(answer="ChromaDB 的 PersistentClient 通过持久化路径启动。[来源1]")
+    state = FakeState(tmp_path, HIT_CHUNKS, gateway=gateway)
+
+    events = await _run(state)
+
+    verification = _last(events, "done")["verification"]
+    assert verification["mode"] == "verified"
+    assert verification["unsupported"] == 0
+    assert verification["severe"] == 0
+    assert verification["repair_attempted"] is False
+
+
+@pytest.mark.asyncio
+async def test_no_evidence_done_has_verification_reason(tmp_path):
+    state = FakeState(tmp_path, [], gateway=FakeGateway(answer="不应调用模型"))
+
+    events = await _run(state, question="ChromaDB 的 PersistentClient 如何启动？")
+
+    verification = _last(events, "done")["verification"]
+    assert verification["mode"] == "refused"
+    assert verification["reason"] == "no_evidence"
+
+
+@pytest.mark.asyncio
 async def test_web_sources_expose_origin_and_time(tmp_path):
     chunks = [
         {

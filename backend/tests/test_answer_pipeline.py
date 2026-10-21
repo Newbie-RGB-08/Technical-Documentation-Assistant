@@ -72,6 +72,33 @@ async def test_strict_pipeline_repairs_once():
     assert "校验发现以下问题" in gateway.calls[1]["messages"][1]["content"]
 
 
+async def test_strict_pipeline_repairs_missing_citations_with_entities():
+    """实体齐全但整段缺引用：可修复，不应直接摘录（真实场景回归）。"""
+    gateway = FakeGateway(
+        [
+            "ChromaDB 使用 PersistentClient 持久化数据。",
+            "ChromaDB 使用 PersistentClient 持久化数据。[来源1]",
+        ]
+    )
+    result = await run_strict_pipeline(gateway, "ChromaDB 怎么持久化？", _pack())
+    assert result.status == "verified"
+    assert result.fallback_level == int(FallbackLevel.L1_REPAIRED)
+    assert len(gateway.calls) == 2
+
+
+async def test_strict_pipeline_repairs_code_block_citation():
+    gateway = FakeGateway(
+        [
+            "示例：\n```python\nprint(1)\n```",
+            "```python\nprint(1)\n```\n[来源1]",
+        ]
+    )
+    result = await run_strict_pipeline(gateway, "示例代码是什么？", _pack())
+    assert result.status == "verified"
+    assert result.fallback_level == int(FallbackLevel.L1_REPAIRED)
+    assert len(gateway.calls) == 2
+
+
 async def test_strict_pipeline_severe_entity_skips_repair():
     gateway = FakeGateway(["ChromaDB 9.9.9 使用 PersistentClient 持久化数据。[来源1]"])
     result = await run_strict_pipeline(gateway, "ChromaDB 怎么持久化？", _pack())
@@ -117,6 +144,85 @@ async def test_strict_pipeline_conflict_disclosure():
     assert result.conflicts
     assert "资料存在冲突" in result.text
     assert len(gateway.calls) == 1
+
+
+async def test_strict_pipeline_verification_summary_for_verified():
+    """done 透出的校验摘要：通过时 mode=verified，且无未支撑句。"""
+    gateway = FakeGateway(["ChromaDB 使用 PersistentClient 持久化数据。[来源1]"])
+    result = await run_strict_pipeline(gateway, "ChromaDB 怎么持久化？", _pack())
+    summary = result.verification
+    assert summary["mode"] == "verified"
+    assert summary["repair_attempted"] is False
+    assert summary["unsupported"] == 0
+    assert summary["severe"] == 0
+    assert summary["illegal_citations"] == []
+    assert summary["factual_count"] >= 1
+    assert 0.0 <= summary["unsupported_ratio"] <= 1.0
+
+
+async def test_strict_pipeline_verification_summary_for_repaired():
+    gateway = FakeGateway(
+        [
+            "ChromaDB 使用 PersistentClient 持久化数据。",
+            "ChromaDB 使用 PersistentClient 持久化数据。[来源1]",
+        ]
+    )
+    result = await run_strict_pipeline(gateway, "ChromaDB 怎么持久化？", _pack())
+    assert result.verification["mode"] == "repaired"
+    assert result.verification["repair_attempted"] is True
+    assert result.verification["unsupported"] == 0
+
+
+async def test_strict_pipeline_verification_summary_for_extractive():
+    """严重实体错误跳过修复 → 摘录，摘要需说明未修复的原因。"""
+    gateway = FakeGateway(["ChromaDB 9.9.9 使用 PersistentClient 持久化数据。[来源1]"])
+    result = await run_strict_pipeline(gateway, "ChromaDB 怎么持久化？", _pack())
+    summary = result.verification
+    assert summary["mode"] == "extractive"
+    assert summary["reason"] == "verification_failed"
+    assert summary["repair_attempted"] is False
+
+
+async def test_strict_pipeline_verification_summary_after_failed_repair():
+    gateway = FakeGateway(
+        [
+            "这个工具在使用时需要注意几个关键配置。",
+            "修复后的内容还是没有引用。",
+        ]
+    )
+    result = await run_strict_pipeline(gateway, "ChromaDB 怎么持久化？", _pack())
+    summary = result.verification
+    assert summary["mode"] == "extractive"
+    assert summary["repair_attempted"] is True
+    assert summary["unsupported"] >= 1
+
+
+async def test_strict_pipeline_verification_summary_for_conflict():
+    gateway = FakeGateway(["当前版本是 1.0。[来源1]"])
+    pack = build_evidence_pack(
+        [
+            {"text": "当前版本 1.0 支持该功能。", "metadata": {"file_path": "a.md"}},
+            {"text": "当前版本 2.0 支持该功能。", "metadata": {"file_path": "b.md"}},
+        ]
+    )
+    result = await run_strict_pipeline(gateway, "当前版本是什么？", pack)
+    assert result.verification["mode"] == "conflict"
+
+
+async def test_strict_pipeline_verification_summary_for_empty_evidence():
+    gateway = FakeGateway(["不应调用"])
+    result = await run_strict_pipeline(gateway, "ChromaDB 怎么持久化？", [])
+    assert result.status == "refused"
+    assert result.verification["mode"] == "refused"
+    assert result.verification["reason"] == "empty_evidence"
+    assert gateway.calls == []
+
+
+async def test_strict_pipeline_verification_summary_for_generation_failure():
+    gateway = FakeGateway(fail=True)
+    result = await run_strict_pipeline(gateway, "ChromaDB 怎么持久化？", _pack())
+    assert result.verification["mode"] == "extractive"
+    assert result.verification["reason"] == "generation_failed"
 
 
 def test_classify_specificity_boundaries():

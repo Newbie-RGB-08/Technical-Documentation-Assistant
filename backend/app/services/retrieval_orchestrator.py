@@ -113,24 +113,71 @@ def build_web_chunks(page: FetchedPage, query: str) -> list[dict]:
     ]
 
 
+def _norm_text(text: str) -> str:
+    """文本归一化：压缩全部空白，用于识别换行/缩进不同但内容相同的重复片段。"""
+    return re.sub(r"\s+", "", str(text or ""))
+
+
+def _canonical_doc_path(path) -> str:
+    """文档路径归一化：绝对路径与相对路径指向同一文件时返回同一个键。"""
+    p = str(path or "").strip().replace("\\", "/")
+    idx = p.rfind("/data/")
+    if idx != -1:
+        p = p[idx + len("/data/"):]
+    elif p.startswith("data/"):
+        p = p[len("data/"):]
+    return p.strip("/").casefold()
+
+
 def _dedupe(chunks: list[dict]) -> list[dict]:
+    """按 URL / 归一化文本 / 同文档同章节前缀去重，避免入库路径差异造成重复来源。"""
     seen_urls: set[str] = set()
     seen_texts: set[str] = set()
+    seen_prefixes: set[tuple[str, str, str]] = set()
     out: list[dict] = []
     for chunk in chunks:
         meta = chunk.get("metadata") or {}
         url = str(meta.get("canonical_url") or meta.get("source_url") or "").strip()
-        text = str(chunk.get("text") or "").strip()
+        text = _norm_text(chunk.get("text") or "")
+        doc_path = _canonical_doc_path(meta.get("file_path"))
+        heading = str(meta.get("heading_path") or "").strip()
+        prefix = text[:80]
+        prefix_key = (doc_path, heading, prefix)
         if url and url in seen_urls:
             continue
         if text and text in seen_texts:
+            continue
+        if doc_path and prefix and heading and prefix_key in seen_prefixes:
             continue
         if url:
             seen_urls.add(url)
         if text:
             seen_texts.add(text)
+        if doc_path and prefix and heading:
+            seen_prefixes.add(prefix_key)
         out.append(chunk)
     return out
+
+
+def _relevance_score(chunk: dict) -> float:
+    """片段相关性：优先 rerank 分，其次向量相似度，最后融合/网页分。"""
+    if chunk.get("rerank_score") is not None:
+        return float(chunk["rerank_score"])
+    if chunk.get("vector_score") is not None:
+        return float(chunk["vector_score"])
+    return float(chunk.get("score", 0.0) or 0.0)
+
+
+def _filter_relevant(
+    chunks: list[dict], *, min_score: float, relative: float
+) -> list[dict]:
+    """过滤明显无关的尾部片段；至少保留最相关的一条。"""
+    if not chunks:
+        return []
+    top = max(_relevance_score(chunk) for chunk in chunks)
+    floor = max(min_score, top * relative)
+    kept = [chunk for chunk in chunks if _relevance_score(chunk) >= floor]
+    return kept or chunks[:1]
 
 
 def _apply_quota(
@@ -186,9 +233,9 @@ def _rank(chunks: list[dict], query: str, reranker) -> list[dict]:
             base = float(chunk.get("score", 0.0) or 0.0)
         return base * (0.7 if is_web else 1.0)
 
-    for chunk in chunks:
-        chunk["rerank_score"] = fused(chunk)
-    return sorted(chunks, key=lambda c: c.get("rerank_score", 0.0), reverse=True)
+    # 降级路径只用于排序，不能把 RRF 分（约 0.01）写成 rerank_score：
+    # 否则 judge_answerability 会把真实本地命中误判为 MISS（E.5 回归）。
+    return sorted(chunks, key=fused, reverse=True)
 
 
 async def _web_candidates(query: str, gateway, fetcher) -> tuple[list[dict], list[FetchedPage]]:
@@ -270,7 +317,12 @@ async def orchestrate(
 
     merged = _dedupe(list(local_chunks) + list(web_chunks))
     ranked = _rank(merged, query, reranker)
-    selected = _apply_quota(ranked, total=total)
+    relevant = _filter_relevant(
+        ranked,
+        min_score=settings.retrieval_min_score,
+        relative=settings.retrieval_relative_score,
+    )
+    selected = _apply_quota(relevant, total=total)
 
     answerability = judge_answerability(
         selected,

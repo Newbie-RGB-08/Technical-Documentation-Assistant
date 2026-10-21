@@ -71,7 +71,7 @@ export default function SourceCard({ source, active, onClick }: Props) {
     <div
       role="button"
       tabIndex={0}
-      className={`source-card glass ${active ? "active" : ""}`}
+      className={`source-card glass ${active ? "active" : ""} ${source.used === false ? "unused" : ""}`}
       onClick={handleCardClick}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -90,6 +90,9 @@ export default function SourceCard({ source, active, onClick }: Props) {
           {sourceKindLabel}
         </span>
         {isOnline && <span className="source-origin-badge web">联网检索</span>}
+        {source.used === false && (
+          <span className="source-unused-badge">未引用</span>
+        )}
         {fetchedDate && (
           <span className="source-fetched-at">抓取于 {fetchedDate}</span>
         )}

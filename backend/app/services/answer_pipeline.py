@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import AsyncIterator
@@ -19,6 +20,8 @@ from app.core.fallback_ladder import (
 )
 from app.core.input_guard import wrap_untrusted_web_content
 
+logger = logging.getLogger(__name__)
+
 SPECIFIC_OPERATION_RE = re.compile(
     r"(如何|怎么|怎样|为啥|为什么).{0,8}(配置|安装|部署|排查|修复|升级|连接|调用|设置|启动)"
     r"|报错|错误码|Traceback|Exception|命令行|--[A-Za-z]"
@@ -30,12 +33,31 @@ GENERAL_SPECIFIC_RE = re.compile(
 STRICT_SYSTEM_PROMPT = """你是一个技术文档研究助手。只能使用下列编号证据回答，禁止使用模型记忆。
 
 规则：
-1. 每个包含事实的句子都必须紧跟在句末标注引用，如 [来源1]
-2. 数字、版本号、端口、错误码、API 名、命令、配置键必须与引用片段逐字一致
-3. 不得引用未提供的编号；不得编造文档、网页或历史对话中的内容
-4. 不要使用“官方/最新/一定/必须”等强断言，除非证据原文明确支持
-5. 证据不足时直接说明“现有资料未覆盖”，不要补全
-6. 回答使用 Markdown；代码块用 ``` 闭合
+1. 每个包含事实的自然段末尾必须紧跟引用，如 [来源1]；列表的每一项也要各自标注引用
+2. 代码块在结束的 ``` 之后单独一行标注引用，例如：
+   ```python
+   client = chromadb.PersistentClient(path="./chroma_db")
+   ```
+   [来源1]
+3. 数字、版本号、端口、错误码、API 名、命令、配置键必须与引用片段逐字一致
+4. 不得引用未提供的编号；不得编造文档、网页或历史对话中的内容
+5. 不要使用“官方/最新/一定/必须”等强断言，除非证据原文明确支持
+6. 证据不足时直接说明“现有资料未覆盖”，不要补全
+7. 回答使用 Markdown；代码块用 ``` 闭合
+
+正确示例：
+ChromaDB 使用 PersistentClient 做本地持久化。[来源1]
+```python
+client = chromadb.PersistentClient(path="./chroma_db")
+```
+[来源1]
+
+错误示例（整段只在末尾标一次引用，前面的句子和代码块无法核验）：
+ChromaDB 使用 PersistentClient 做本地持久化，配置如下：
+```python
+client = chromadb.PersistentClient(path="./chroma_db")
+```
+[来源1]
 
 证据快照：
 {context}
@@ -56,6 +78,32 @@ class AnswerResult:
     fallback_level: int = int(FallbackLevel.L0_NORMAL)
     used_indices: list[int] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
+    verification: dict = field(default_factory=dict)
+
+
+def _verification_summary(
+    verification: VerificationResult | None,
+    mode: str,
+    *,
+    repair_attempted: bool = False,
+    reason: str = "",
+) -> dict:
+    """把校验结果压缩成可透出到 done 事件的结构化摘要（不含正文）。"""
+    summary: dict = {"mode": mode, "repair_attempted": repair_attempted}
+    if reason:
+        summary["reason"] = reason
+    if verification is not None:
+        summary.update(
+            {
+                "factual_count": verification.factual_count,
+                "unsupported": len(verification.unsupported),
+                "severe": len(verification.severe),
+                "illegal_citations": list(verification.illegal_citations),
+                "unsupported_ratio": round(verification.unsupported_ratio, 4),
+                "degenerate": verification.degenerate,
+            }
+        )
+    return summary
 
 
 def _context_for(evidence: EvidencePack) -> str:
@@ -162,8 +210,8 @@ def _repair_messages(
             "content": (
                 f"问题：{query}\n\n原回答：\n{answer}\n\n"
                 f"校验发现以下问题：\n{verification.repair_brief()}\n\n"
-                "请删除或改写未被证据支撑的句子；只能使用上述证据，不得新增事实，"
-                "并保留正确的 [来源N] 引用。"
+                "请只做最小修改：给缺少引用的自然段和代码块补上正确的 [来源N]，"
+                "删除或改写未被证据支撑的句子；不得新增事实，保留原本正确的引用。"
             ),
         },
     ]
@@ -184,12 +232,16 @@ async def run_strict_pipeline(
             text=fallback_message(FallbackLevel.L4_REFUSED),
             status="refused",
             fallback_level=int(FallbackLevel.L4_REFUSED),
+            verification=_verification_summary(None, "refused", reason="empty_evidence"),
         )
 
     try:
         answer = await _generate(gateway, _strict_messages(query, pack), model_id)
-    except Exception:  # noqa: BLE001 - 全链失败直接摘录
-        return build_extractive_answer(pack)
+    except Exception as exc:  # noqa: BLE001 - 全链失败直接摘录
+        logger.warning("严格管道生成失败，直接摘录: %s", exc)
+        result = build_extractive_answer(pack)
+        result.verification = _verification_summary(None, "extractive", reason="generation_failed")
+        return result
 
     answer = answer[: settings.max_answer_chars]
     verification = verify_answer(
@@ -199,9 +251,22 @@ async def run_strict_pipeline(
         max_unsupported_ratio=settings.max_unsupported_claim_ratio,
         question=query,
     )
+    logger.info(
+        "严格管道校验(初检) | passed=%s factual=%d unsupported=%d severe=%d "
+        "illegal=%s ratio=%.3f degenerate=%s",
+        verification.passed,
+        verification.factual_count,
+        len(verification.unsupported),
+        len(verification.severe),
+        verification.illegal_citations,
+        verification.unsupported_ratio,
+        verification.degenerate,
+    )
 
     if verification.conflicts:
-        return build_conflict_answer(pack, verification.conflicts)
+        result = build_conflict_answer(pack, verification.conflicts)
+        result.verification = _verification_summary(verification, "conflict")
+        return result
 
     if verification.passed:
         return AnswerResult(
@@ -210,6 +275,7 @@ async def run_strict_pipeline(
             verified=True,
             fallback_level=int(FallbackLevel.L0_NORMAL),
             used_indices=_citations_in(answer),
+            verification=_verification_summary(verification, "verified"),
         )
 
     # 严重实体错误 / 退化输出不再重试，直接摘录（PRD E.6.3）
@@ -228,8 +294,13 @@ async def run_strict_pipeline(
             repaired = await _generate(
                 gateway, _repair_messages(query, pack, answer, verification), model_id
             )
-        except Exception:  # noqa: BLE001
-            return build_extractive_answer(pack)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("严格管道修复失败，降级摘录: %s", exc)
+            result = build_extractive_answer(pack)
+            result.verification = _verification_summary(
+                verification, "extractive", repair_attempted=True, reason="repair_failed"
+            )
+            return result
 
         repaired = repaired[: settings.max_answer_chars]
         second = verify_answer(
@@ -239,8 +310,23 @@ async def run_strict_pipeline(
             max_unsupported_ratio=settings.max_unsupported_claim_ratio,
             question=query,
         )
+        logger.info(
+            "严格管道校验(复检) | passed=%s factual=%d unsupported=%d severe=%d "
+            "illegal=%s ratio=%.3f degenerate=%s",
+            second.passed,
+            second.factual_count,
+            len(second.unsupported),
+            len(second.severe),
+            second.illegal_citations,
+            second.unsupported_ratio,
+            second.degenerate,
+        )
         if second.conflicts:
-            return build_conflict_answer(pack, second.conflicts)
+            result = build_conflict_answer(pack, second.conflicts)
+            result.verification = _verification_summary(
+                second, "conflict", repair_attempted=True
+            )
+            return result
         if second.passed:
             return AnswerResult(
                 text=repaired,
@@ -248,14 +334,28 @@ async def run_strict_pipeline(
                 verified=True,
                 fallback_level=int(FallbackLevel.L1_REPAIRED),
                 used_indices=_citations_in(repaired),
+                verification=_verification_summary(
+                    second, "repaired", repair_attempted=True
+                ),
             )
 
     if settings.extractive_fallback_enabled:
-        return build_extractive_answer(pack)
+        result = build_extractive_answer(pack)
+        result.verification = _verification_summary(
+            verification, "extractive", repair_attempted=repair_allowed, reason="verification_failed"
+        )
+        logger.info(
+            "严格管道最终结果 | status=%s fallback=%d used=%s mode=extractive",
+            result.status, result.fallback_level, result.used_indices,
+        )
+        return result
     return AnswerResult(
         text=fallback_message(FallbackLevel.L4_REFUSED),
         status="refused",
         fallback_level=int(FallbackLevel.L4_REFUSED),
+        verification=_verification_summary(
+            verification, "refused", repair_attempted=repair_allowed, reason="verification_failed"
+        ),
     )
 
 

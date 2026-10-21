@@ -132,3 +132,75 @@ describe("useChatStream 来源合并透传（V1.2）", () => {
     expect(result.current.sources[0].indices).toEqual([3, 4, 7, 9]);
   });
 });
+
+describe("useChatStream V1.4 来源清理与引用标记", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const UNUSED: SourceItem = {
+    index: 5,
+    indices: [5],
+    chunk_count: 1,
+    title: "未被引用的笔记",
+    file_path: "data/notes/unused.md",
+    excerpt: "未使用的内容",
+    score: 0.4,
+  };
+
+  it("done.used_indices 标记来源已引用/未引用", async () => {
+    (streamChat as any).mockImplementation(
+      async ({ onEvent }: { onEvent: (e: any) => void }) => {
+        onEvent({ event: "sources", data: [MERGED, UNUSED] });
+        onEvent({ event: "content", data: { text: "答案 [来源4]" } });
+        onEvent({
+          event: "done",
+          data: { session_id: "sess-used", answer_status: "verified", used_indices: [4] },
+        });
+      }
+    );
+
+    const { result } = renderHook(() => useChatStream(null));
+    await act(async () => {
+      await result.current.send("Python 演示章节讲了什么？");
+    });
+
+    await waitFor(() => expect(result.current.streaming).toBe(false));
+    expect(result.current.sources[0].used).toBe(true);
+    expect(result.current.sources[1].used).toBe(false);
+    const assistant = result.current.messages.find((m) => m.role === "assistant")!;
+    expect(assistant.sources?.[0].used).toBe(true);
+    expect(assistant.sources?.[1].used).toBe(false);
+  });
+
+  it("发送新问题会清空上一轮来源", async () => {
+    let round = 0;
+    (streamChat as any).mockImplementation(
+      async ({ onEvent }: { onEvent: (e: any) => void }) => {
+        round += 1;
+        if (round === 1) {
+          onEvent({ event: "sources", data: [MERGED] });
+          onEvent({ event: "content", data: { text: "第一轮答案" } });
+          onEvent({ event: "done", data: { session_id: "s1", answer_status: "verified" } });
+        } else {
+          onEvent({ event: "content", data: { text: "第二轮答案" } });
+          onEvent({ event: "done", data: { session_id: "s1", answer_status: "refused" } });
+        }
+      }
+    );
+
+    const { result } = renderHook(() => useChatStream(null));
+    await act(async () => {
+      await result.current.send("第一轮问题");
+    });
+    await waitFor(() => expect(result.current.sources).toHaveLength(1));
+
+    await act(async () => {
+      await result.current.send("第二轮问题");
+    });
+    await waitFor(() => expect(result.current.streaming).toBe(false));
+    expect(result.current.sources).toHaveLength(0);
+    const assistants = result.current.messages.filter((m) => m.role === "assistant");
+    expect(assistants[assistants.length - 1].sources ?? []).toHaveLength(0);
+  });
+});

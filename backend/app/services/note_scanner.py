@@ -9,7 +9,21 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from app.config import BACKEND_DIR
+
 FRONT_MATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
+
+
+def normalize_file_path(path: str | Path) -> str:
+    """入库路径统一为相对 backend 的 POSIX 形式。
+
+    同一份笔记可能被以绝对路径和相对路径各入库一次，统一后可以从源头避免重复。
+    """
+    p = Path(path)
+    try:
+        return p.resolve().relative_to(BACKEND_DIR).as_posix()
+    except ValueError:
+        return p.resolve().as_posix()
 
 
 def parse_front_matter(text: str) -> tuple[dict, str]:
@@ -68,7 +82,7 @@ def scan_markdown_files(directory: str | Path, source_type: str = "personal_note
         meta = _file_meta_from_path(p, source_type)
         files.append(
             {
-                "file_path": str(p),
+                "file_path": normalize_file_path(p),
                 "source_type": source_type,
                 "title": str(fm.get("title") or p.stem),
                 "tags": tags,

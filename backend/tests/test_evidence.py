@@ -65,6 +65,19 @@ def test_judge_hit_partial_miss():
     assert judge_answerability([], "FastAPI 如何配置 CORS？") == Answerability.MISS
 
 
+def test_mixed_sources_web_score_not_dragged_down_by_local_rerank():
+    """本地低 rerank 分 + 网页高分片段混合时，不能被本地分拖成 MISS。"""
+    chunks = [
+        _chunk("ChromaDB 本地文档版本为 0.4.24。", rerank=0.2),
+        _chunk("ChromaDB 网页文档版本为 0.5.1。", score=0.7),
+    ]
+    assert judge_answerability(chunks, "ChromaDB 当前版本号是多少？") == Answerability.HIT
+    # 仅有低分本地片段时仍判 MISS（不因网页加权逻辑放宽）
+    assert judge_answerability(
+        chunks[:1], "ChromaDB 当前版本号是多少？"
+    ) == Answerability.MISS
+
+
 def test_judge_stale_for_recency_question():
     old = (datetime.now(timezone.utc) - timedelta(days=400)).isoformat(timespec="seconds")
     chunks = [

@@ -221,6 +221,20 @@ describe("SourceCard 合并展示（V1.2）", () => {
   });
 });
 
+describe("SourceCard V1.4 引用标记", () => {
+  it("未被回答引用的来源显示「未引用」并置灰", () => {
+    render(<SourceCard source={{ ...LOCAL_SOURCE, used: false }} />);
+    expect(screen.getByText("未引用")).toBeInTheDocument();
+    expect(screen.getByText("Ollama 运维笔记").closest(".source-card")).toHaveClass("unused");
+  });
+
+  it("被回答引用的来源不显示「未引用」", () => {
+    render(<SourceCard source={{ ...LOCAL_SOURCE, used: true }} />);
+    expect(screen.queryByText("未引用")).not.toBeInTheDocument();
+    expect(screen.getByText("Ollama 运维笔记").closest(".source-card")).not.toHaveClass("unused");
+  });
+});
+
 describe("SourceCard V1.4 联网徽章与抓取时间", () => {
   const ONLINE: SourceItem = {
     index: 2,

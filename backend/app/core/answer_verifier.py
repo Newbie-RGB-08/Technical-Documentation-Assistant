@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from app.core.evidence import EvidencePack, build_evidence_pack, extract_entities
 
 CITATION_RE = re.compile(r"\[(?:来源\s*)?(\d{1,2})\]")
+# 代码块结束围栏之后单独一行的引用，如 “[来源1] [来源2]”
+CITATION_ONLY_RE = re.compile(r"(?:\[(?:来源\s*)?\d{1,2}\]\s*)+")
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?；;])(?![\s]*(?:\[来源|\[\d{1,2}\]))")
 VERSION_RE = re.compile(r"(?<![\w.])[vV]?\d+(?:\.\d+){1,3}(?![\w.])")
 PORT_RE = re.compile(r"(?:localhost|127\.0\.0\.1)?:\d{2,5}\b")
@@ -45,10 +47,15 @@ class VerificationResult:
 
 
 def split_sentences(answer: str) -> list[str]:
-    """按句末标点/换行切分，代码块整体保留，避免切断代码。"""
+    """按句末标点/换行切分，代码块整体保留，避免切断代码。
+
+    代码块结束围栏后单独一行的引用（如 `[来源1]`）并入该代码块，
+    这样“块外标注引用”的常见写法也能被正确核验。
+    """
     units: list[str] = []
     buffer: list[str] = []
     in_code = False
+    closed_code_index: int | None = None
 
     def flush_plain() -> None:
         if buffer:
@@ -58,12 +65,23 @@ def split_sentences(answer: str) -> list[str]:
             buffer.clear()
 
     for line in (answer or "").split("\n"):
-        if line.strip().startswith("```"):
+        stripped = line.strip()
+        if not in_code and closed_code_index is not None:
+            if not stripped:
+                continue
+            if CITATION_ONLY_RE.fullmatch(stripped):
+                units[closed_code_index] = f"{units[closed_code_index]} {stripped}"
+                closed_code_index = None
+                continue
+            closed_code_index = None
+
+        if stripped.startswith("```"):
             if in_code:
                 buffer.append(line)
                 units.append("\n".join(buffer).strip())
                 buffer.clear()
                 in_code = False
+                closed_code_index = len(units) - 1
             else:
                 flush_plain()
                 buffer.append(line)
@@ -111,6 +129,9 @@ def _is_non_factual(sentence: str) -> bool:
     if not text or _is_heading(text):
         return True
     if text in ("注意", "说明", "总结", "总之", "另外", "此外", "例如", "如下", "结论"):
+        return True
+    # 以冒号结尾的引导句（“配置如下：”）不构成事实断言，引用由后续内容承担
+    if text.endswith(("：", ":")):
         return True
     return _meaningful_length(text) < 4
 
@@ -208,19 +229,20 @@ def verify_answer(
         unsupported_reasons: list[str] = []
         if illegal:
             unsupported_reasons.append("引用编号越界")
-        if not is_code and not citations:
-            unsupported_reasons.append("事实句缺少引用")
-        elif is_code and not citations:
-            # 代码块不强制逐句引用，但无法核验的代码实体按严重处理
-            pass
+        if not citations:
+            # 缺引用属于可修复问题；真正不可修复的是“有引用但实体对不上”
+            unsupported_reasons.append("代码块缺少引用" if is_code else "事实句缺少引用")
 
         cited_text = "\n".join(pack.text(n) for n in valid)
         entities = extract_entities(CITATION_RE.sub("", sentence))
         if critical_entity_check:
             missing = [e for e in entities if e not in cited_text]
             if missing and entities:
-                if not valid:
-                    result.severe.append(f"{sentence}（关键实体无可用引用：{'、'.join(missing)}）")
+                if not valid and not illegal:
+                    # 没有引用也没用非法编号：交给修复环节补引用
+                    unsupported_reasons.append(
+                        f"关键实体无可用引用：{'、'.join(missing)}"
+                    )
                 else:
                     result.severe.append(
                         f"{sentence}（关键实体未在引用片段出现：{'、'.join(missing)}）"

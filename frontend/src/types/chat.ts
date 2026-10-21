@@ -29,6 +29,7 @@ export interface SourceItem {
   origin?: "local" | "web_search" | "hybrid";
   retrieved_at?: string;   // 网页抓取时间（本地来源为空）
   trust_level?: string;    // local_high | web_medium
+  used?: boolean;          // V1.4 优化：本次回答是否实际引用了该来源
 }
 
 export interface ChatMessage {
@@ -94,6 +95,7 @@ export interface DonePayload {
   elapsed_ms?: number;
   request_id?: string;
   interrupted?: boolean;
+  used_indices?: number[]; // V1.4 优化：回答实际引用的片段编号
 }
 
 export interface ModelOption {

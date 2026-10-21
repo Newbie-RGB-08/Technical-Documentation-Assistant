@@ -147,18 +147,29 @@ def entity_coverage(question: str, chunks: list[dict], top_n: int = 3) -> float:
 
 
 def _relevance(chunks: list[dict], confidence: float | None) -> float:
+    """取 TopN 的相关度：rerank 分优先，无 rerank 的片段用自己的分数。
+
+    混合来源（本地 + 网页）时，网页片段通常只有融合分而没有 rerank 分，
+    不能因为本地片段带了低 rerank 分就把整体相关性拉低成 MISS。
+    """
     top = chunks[:3]
-    rerank_scores = [
-        float(c["rerank_score"]) for c in top if c.get("rerank_score") is not None
-    ]
-    if rerank_scores:
-        return max(rerank_scores)
+    scores: list[float] = []
+    for chunk in top:
+        if chunk.get("rerank_score") is not None:
+            scores.append(float(chunk["rerank_score"]))
+            continue
+        # 无 rerank 分时优先用向量相似度；RRF 融合分（约 0.01）不能代表相关性
+        score = max(
+            float(chunk.get("vector_score", 0.0) or 0.0),
+            float(chunk.get("score", 0.0) or 0.0),
+        )
+        if score > 0:
+            scores.append(score)
+    if scores:
+        return max(scores)
     if confidence is not None and float(confidence) > 0:
         return float(confidence)
-    if not top:
-        return 0.0
-    # 融合结果（如纯网页候选）没有 rerank 分且本地置信度为 0 时，退回片段分数
-    return max(float(c.get("score", 0.0) or 0.0) for c in top)
+    return 0.0
 
 
 def _parse_time(value) -> datetime | None:

@@ -30,6 +30,15 @@ export default function ChatContainer() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [chat.messages, chat.streaming]);
 
+  // V1.4 优化：宽屏下拿到来源后自动展开来源面板
+  useEffect(() => {
+    if (chat.sources.length === 0) return;
+    if (typeof window.matchMedia !== "function") return;
+    if (window.matchMedia("(min-width: 1200px)").matches) {
+      chat.setPanelOpen(true);
+    }
+  }, [chat.sources.length, chat.setPanelOpen]);
+
   return (
     <div className="app-shell">
       <header className="app-header glass">
@@ -75,6 +84,7 @@ export default function ChatContainer() {
                 message={message}
                 onCitationClick={chat.openCitation}
                 onRetry={message.role === "assistant" ? chat.retry : undefined}
+                onOpenSources={() => chat.setPanelOpen(true)}
               />
             ))
           )}

@@ -89,3 +89,37 @@ def test_split_sentences_keeps_code_block_whole():
     parts = split_sentences(answer)
     assert any("print(1)" in p and "print(2)" in p and p.count("```") == 2 for p in parts)
     assert "第一句。[来源1]" in parts
+
+
+def test_split_sentences_merges_citation_after_code_fence():
+    """代码块结束后的独立引用行并入代码块，避免块外标注被判无引用。"""
+    answer = "配置如下：\n```python\nprint(1)\n```\n[来源1]\n完毕。[来源2]"
+    parts = split_sentences(answer)
+    code_units = [p for p in parts if "print(1)" in p]
+    assert len(code_units) == 1
+    assert "[来源1]" in code_units[0]
+    assert "完毕。[来源2]" in parts
+
+
+def test_code_block_citation_after_fence_passes():
+    pack = _pack(["示例代码 print(1) 可以直接运行。"])
+    answer = "示例代码如下：\n```python\nprint(1)\n```\n[来源1]"
+    result = verify_answer(answer, pack, question="示例代码是什么？")
+    assert result.passed is True
+
+
+def test_missing_citation_with_entities_is_repairable():
+    """有实体但整体缺引用：应进入可修复的 unsupported，而不是 severe。"""
+    pack = _pack(["ChromaDB 使用 PersistentClient 持久化数据。"])
+    result = verify_answer("ChromaDB 使用 PersistentClient 持久化数据。", pack)
+    assert result.passed is False
+    assert result.severe == []
+    assert any("缺少引用" in item for item in result.unsupported)
+
+
+def test_code_block_without_citation_is_repairable():
+    pack = _pack(["示例代码 print(1) 可以直接运行。"])
+    result = verify_answer("```python\nprint(1)\n```", pack)
+    assert result.passed is False
+    assert result.severe == []
+    assert any("代码块缺少引用" in item for item in result.unsupported)

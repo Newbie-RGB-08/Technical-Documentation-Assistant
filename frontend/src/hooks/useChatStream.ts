@@ -32,6 +32,16 @@ export function useChatStream(modelId: string | null) {
   const sessionIdRef = useRef<string>(crypto.randomUUID());
   const abortRef = useRef<AbortController | null>(null);
   const lastQuestionRef = useRef<string>("");
+  // 记录当前来源，done 时据此标记“已引用/未引用”
+  const sourcesRef = useRef<SourceItem[]>([]);
+
+  const markUsed = useCallback((items: SourceItem[], usedIndices: number[]): SourceItem[] => {
+    const used = new Set(usedIndices);
+    return items.map((source) => {
+      const indices = source.indices?.length ? source.indices : [source.index];
+      return { ...source, used: indices.some((index) => used.has(index)) };
+    });
+  }, []);
 
   const patchMessage = useCallback((id: string, patch: Partial<ChatMessage>) => {
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
@@ -45,6 +55,11 @@ export function useChatStream(modelId: string | null) {
       setNotice(null);
       setStage(null);
       setConfirmPayload(null);
+      // 新问题开始：清空上一轮来源，避免来源与当前回答串台
+      sourcesRef.current = [];
+      setSources([]);
+      setActiveSource(null);
+      setPanelOpen(false);
       lastQuestionRef.current = text;
 
       const assistantId = uid("a");
@@ -74,6 +89,7 @@ export function useChatStream(modelId: string | null) {
           }
           case "sources": {
             const items = data as SourceItem[];
+            sourcesRef.current = items;
             setSources(items);
             patchMessage(assistantId, { sources: items });
             break;
@@ -105,11 +121,18 @@ export function useChatStream(modelId: string | null) {
           case "done": {
             const done = data as DonePayload;
             if (done.session_id) sessionIdRef.current = done.session_id;
+            let finalSources = sourcesRef.current;
+            if (Array.isArray(done.used_indices) && finalSources.length > 0) {
+              finalSources = markUsed(finalSources, done.used_indices);
+              sourcesRef.current = finalSources;
+              setSources(finalSources);
+            }
             patchMessage(assistantId, {
               pending: false,
               answer_status: (done.answer_status as AnswerStatus) ?? "verified",
               interrupted: Boolean(done.interrupted),
               request_id: done.request_id,
+              sources: finalSources,
             });
             setStage(null);
             setStreaming(false);
@@ -146,7 +169,7 @@ export function useChatStream(modelId: string | null) {
         abortRef.current = null;
       }
     },
-    [modelId, patchMessage, streaming],
+    [modelId, patchMessage, streaming, markUsed],
   );
 
   const stop = useCallback(() => {

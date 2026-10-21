@@ -136,7 +136,9 @@ def _build_card(members: list[tuple[int, dict]], max_excerpts: int) -> dict:
         if heading and heading not in headings:
             headings.append(heading)
         if len(excerpts) < max_excerpts:
-            excerpts.append(_strip_heading_lines(chunk["text"])[:200])
+            excerpt = _strip_heading_lines(chunk["text"])[:200]
+            if excerpt:
+                excerpts.append(excerpt)
 
     score = max(
         float(chunk.get("rerank_score", chunk.get("score", 0.0)) or 0.0)
@@ -637,6 +639,8 @@ async def _strict_answer(
             if queue.put({"page": page, "query": rewritten, "relevance": relevance}):
                 kb_written = True
 
+    # 回答正文实际引用的证据编号（1..N），前端据此标记来源“已引用/未引用”
+    used_indices = sorted({i for i in result.used_indices if 1 <= i <= len(chunks)})
     yield "done", {
         "session_id": session_id,
         "level": used_level,
@@ -644,6 +648,8 @@ async def _strict_answer(
         "answer_status": result.status,
         "verified": result.verified,
         "fallback_level": result.fallback_level,
+        "used_indices": used_indices,
+        "verification": result.verification,
         "kb_written": kb_written,
         "elapsed_ms": _elapsed_ms(started),
     }
@@ -695,6 +701,7 @@ async def _no_evidence_answer(
             "answer_status": result.status,
             "verified": False,
             "fallback_level": result.fallback_level,
+            "verification": {"mode": "general", "verified": False},
             "kb_written": False,
             "elapsed_ms": _elapsed_ms(started),
         }
@@ -713,6 +720,7 @@ async def _no_evidence_answer(
         "answer_status": "refused",
         "verified": False,
         "fallback_level": int(FallbackLevel.L4_REFUSED),
+        "verification": {"mode": "refused", "reason": "no_evidence"},
         "kb_written": False,
         "elapsed_ms": _elapsed_ms(started),
     }

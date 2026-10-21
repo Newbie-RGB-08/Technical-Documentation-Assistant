@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { ChatMessage } from "../types/chat";
+import type { ChatMessage, SourceItem } from "../types/chat";
 import MessageBubble from "./MessageBubble";
 
 function makeMessage(content: string, role: "user" | "assistant" = "assistant"): ChatMessage {
@@ -83,6 +83,24 @@ describe("MessageBubble V1.4 答案状态徽章", () => {
     expect(screen.getByText("未验证")).toBeInTheDocument();
   });
 
+  it("未验证且无来源时提示“本次未使用知识库或网页来源”", () => {
+    render(
+      <MessageBubble
+        message={{ ...makeMessage("通用说明"), answer_status: "unverified_general" }}
+      />,
+    );
+    expect(screen.getByText("本次未使用知识库或网页来源")).toBeInTheDocument();
+  });
+
+  it("验证通过且无来源时不显示无来源提示", () => {
+    render(
+      <MessageBubble
+        message={{ ...makeMessage("已核验内容"), answer_status: "verified" }}
+      />,
+    );
+    expect(screen.queryByText("本次未使用知识库或网页来源")).not.toBeInTheDocument();
+  });
+
   it("摘录兜底显示「仅摘录」徽章", () => {
     render(
       <MessageBubble message={{ ...makeMessage("摘录内容"), answer_status: "extractive" }} />,
@@ -114,5 +132,71 @@ describe("MessageBubble V1.4 答案状态徽章", () => {
     expect(screen.queryByText("未验证")).not.toBeInTheDocument();
     expect(screen.queryByText("仅摘录")).not.toBeInTheDocument();
     expect(screen.queryByText("已中断")).not.toBeInTheDocument();
+  });
+});
+
+describe("MessageBubble V1.4 内联来源列表", () => {
+  const SOURCES: SourceItem[] = [
+    {
+      index: 1,
+      title: "Chroma 入门",
+      file_path: "data/notes/chroma.md",
+      excerpt: "PersistentClient 使用本地目录。",
+      score: 0.92,
+    },
+    {
+      index: 2,
+      title: "检索笔记",
+      file_path: "data/notes/retrieval.md",
+      excerpt: "RRF 融合两路检索。",
+      score: 0.81,
+    },
+    {
+      index: 3,
+      title: "写回笔记",
+      file_path: "data/notes/writeback.md",
+      excerpt: "网页资料写回知识库。",
+      score: 0.75,
+    },
+  ];
+
+  it("回答下方直接展示来源卡片，无需打开抽屉", () => {
+    render(
+      <MessageBubble
+        message={{ ...makeMessage("回答正文 [来源1]"), sources: SOURCES.slice(0, 2) }}
+      />,
+    );
+    expect(screen.getByLabelText("来源引用")).toBeInTheDocument();
+    expect(screen.getByText("来源引用（2）")).toBeInTheDocument();
+    expect(screen.getByText("Chroma 入门")).toBeInTheDocument();
+    expect(screen.getByText("检索笔记")).toBeInTheDocument();
+  });
+
+  it("来源超过两条时提供“查看全部”入口并触发回调", () => {
+    const onOpenSources = vi.fn();
+    render(
+      <MessageBubble
+        message={{ ...makeMessage("回答正文"), sources: SOURCES }}
+        onOpenSources={onOpenSources}
+      />,
+    );
+    expect(screen.getByText("来源引用（3）")).toBeInTheDocument();
+    expect(screen.queryByText("写回笔记")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看全部 3 个来源" }));
+    expect(onOpenSources).toHaveBeenCalledTimes(1);
+  });
+
+  it("两条来源时不显示“查看全部”", () => {
+    render(
+      <MessageBubble message={{ ...makeMessage("回答正文"), sources: SOURCES.slice(0, 2) }} />,
+    );
+    expect(screen.queryByRole("button", { name: /查看全部/ })).not.toBeInTheDocument();
+  });
+
+  it("用户消息不渲染来源列表", () => {
+    render(
+      <MessageBubble message={{ ...makeMessage("我的问题", "user"), sources: SOURCES }} />,
+    );
+    expect(screen.queryByLabelText("来源引用")).not.toBeInTheDocument();
   });
 });

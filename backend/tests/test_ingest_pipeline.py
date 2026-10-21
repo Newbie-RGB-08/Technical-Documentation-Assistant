@@ -8,7 +8,7 @@ import pytest
 
 from app.services.ingest_pipeline import compute_content_hash, ingest_files
 from app.services.metadata_store import MySQLMetadataStore
-from app.services.note_scanner import scan_markdown_files
+from app.services.note_scanner import normalize_file_path, scan_markdown_files
 from app.services.vector_store import ChromaStore
 
 NOTES = {
@@ -78,7 +78,7 @@ def test_full_ingest_then_skip(stores, notes_dir):
 def test_incremental_update_single_file(stores, notes_dir):
     vector_store, metadata_store = stores
     target = notes_dir / "b_retrieval.md"
-    old_doc = metadata_store.get_document(str(target))
+    old_doc = metadata_store.get_document(normalize_file_path(target))
     old_ids = {c["chroma_id"] for c in metadata_store.get_chunks_by_document(old_doc["id"])}
 
     # 修改一个文件（验收 #3）
@@ -90,13 +90,13 @@ def test_incremental_update_single_file(stores, notes_dir):
     summary = ingest_files(files, vector_store, metadata_store)
     assert summary["ingested"] == 1 and summary["skipped"] == 2 and summary["failed"] == 0
 
-    new_doc = metadata_store.get_document(str(target))
+    new_doc = metadata_store.get_document(normalize_file_path(target))
     assert new_doc["content_hash"] != old_doc["content_hash"]
     new_ids = {c["chroma_id"] for c in metadata_store.get_chunks_by_document(new_doc["id"])}
     assert new_ids != old_ids, "变更文件的向量 ID 应更新"
 
     # 未变更文件的 hash 不变
-    other = metadata_store.get_document(str(notes_dir / "a_chroma.md"))
+    other = metadata_store.get_document(normalize_file_path(notes_dir / "a_chroma.md"))
     assert other["content_hash"] == compute_content_hash(NOTES["a_chroma.md"].split("---\n\n", 1)[1])
 
 
@@ -191,7 +191,7 @@ def test_ingest_calls_on_file_ingested_callback(stores, tmp_path):
     )
     assert summary["ingested"] == 1
     assert len(events) == 1
-    assert events[0]["file_path"] == str(p)
+    assert events[0]["file_path"] == normalize_file_path(p)
     assert events[0]["source_type"] == "personal_note"
     assert events[0]["chunk_count"] > 0
     assert events[0]["document_id"] > 0
@@ -221,14 +221,14 @@ def test_ingest_writes_source_url_to_document_and_chunks(stores, tmp_path):
     assert summary["ingested"] == 1
 
     # MySQL 文档记录
-    doc = metadata_store.get_document(str(p))
+    doc = metadata_store.get_document(normalize_file_path(p))
     assert doc is not None
     assert doc.get("source_url") == "https://fastapi.tiangolo.com/tutorial/dependencies/"
 
     # Chroma chunk metadata
     results = vector_store.query("Depends 依赖注入", source_type="tech_doc", top_k=3)
     # (Chroma 可能还被其他测试占着，只要能找到我们的文件就行)
-    our = [r for r in results if r["metadata"].get("file_path") == str(p)]
+    our = [r for r in results if r["metadata"].get("file_path") == normalize_file_path(p)]
     assert our, "Chroma 未找到我们的测试文档"
     for c in our:
         assert c["metadata"].get("source_url") == "https://fastapi.tiangolo.com/tutorial/dependencies/"

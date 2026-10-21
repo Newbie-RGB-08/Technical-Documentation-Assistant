@@ -294,3 +294,105 @@ def test_extract_paragraphs_prefers_query_overlap():
     paragraphs = extract_paragraphs(markdown, "ChromaDB PersistentClient 启动", max_n=1)
     assert len(paragraphs) == 1
     assert "PersistentClient" in paragraphs[0]
+
+
+def test_rrf_only_hit_is_not_judged_miss():
+    """回归：无 Reranker 时 RRF 分约 0.01，不得覆盖 rerank_score 导致真实命中被判 MISS。"""
+
+    class RrfLocal:
+        def __call__(self, query, level=3, top_k=5):
+            return (
+                [
+                    {
+                        "id": "c1",
+                        "text": "ChromaDB 的 PersistentClient 通过持久化路径启动。",
+                        "metadata": {
+                            "file_path": "data/notes/a.md",
+                            "source_type": "personal_note",
+                        },
+                        # RRF 融合后的排序分很小，向量相似度仍然很高
+                        "score": 0.0164,
+                        "vector_score": 0.90,
+                    }
+                ],
+                2,
+                0.90,
+            )
+
+    outcome = _run(
+        orchestrate(
+            QUERY,
+            local_retriever=RrfLocal(),
+            complexity="simple",
+            route="fallback",
+        )
+    )
+
+    assert outcome.chunks
+    assert "rerank_score" not in outcome.chunks[0], "降级排序分不应伪装成 rerank 分"
+    assert outcome.answerability.value in ("HIT", "PARTIAL"), (
+        f"真实本地命中不应被判 MISS，实际 {outcome.answerability}"
+    )
+
+
+def test_low_relevance_tail_is_filtered():
+    """重排后接近 0 分的无关片段不应进入证据与来源。"""
+    local = FakeLocal(
+        [
+            _local_chunk(1, rerank=0.90),
+            _local_chunk(2, rerank=0.02),
+            _local_chunk(3, rerank=0.001),
+        ]
+    )
+
+    outcome = _run(
+        orchestrate(
+            QUERY,
+            local_retriever=local,
+            complexity="simple",
+            route="none",
+        )
+    )
+
+    assert [c["id"] for c in outcome.chunks] == ["c1"]
+
+
+def test_near_duplicate_chunks_are_deduped():
+    """绝对/相对路径入库造成的同内容片段只保留一条。"""
+    text = "ChromaDB 的 PersistentClient 通过持久化路径启动。"
+    local = FakeLocal(
+        [
+            _local_chunk(1, text=text, path=r"D:\workspace\backend\data\notes\a.md"),
+            _local_chunk(2, text=text.replace("。", "。\n"), path="data/notes/a.md"),
+        ]
+    )
+
+    outcome = _run(
+        orchestrate(
+            QUERY,
+            local_retriever=local,
+            complexity="simple",
+            route="none",
+        )
+    )
+
+    assert len(outcome.chunks) == 1
+
+
+def test_dedupe_keeps_distinct_chunks_of_same_document():
+    """同文档不同章节的片段不能被误去重。"""
+    local = FakeLocal(
+        [_local_chunk(1, text="第一段讲持久化路径。", path="data/notes/a.md"),
+         _local_chunk(2, text="第二段讲集合管理。", path="data/notes/a.md")]
+    )
+
+    outcome = _run(
+        orchestrate(
+            QUERY,
+            local_retriever=local,
+            complexity="simple",
+            route="none",
+        )
+    )
+
+    assert len(outcome.chunks) == 2

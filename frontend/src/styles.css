@@ -221,6 +221,51 @@ select {
   font-size: 12px;
 }
 
+/* V1.4 优化：回答气泡内联来源与无来源提示 */
+.message-no-source {
+  margin-top: 10px;
+  font-size: 12px;
+  color: rgba(245, 247, 255, 0.6);
+}
+
+.inline-sources {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.inline-sources-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.inline-sources-title {
+  font-size: 12px;
+  color: rgba(245, 247, 255, 0.72);
+}
+
+.inline-sources-more {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: #cfe4ff;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.inline-sources-more:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.inline-source-list {
+  display: grid;
+  gap: 8px;
+}
+
 .app-footer {
   padding-bottom: 2px;
 }
@@ -348,6 +393,18 @@ select {
 
 .source-card.active {
   outline: 2px solid rgba(140, 190, 255, 0.82);
+}
+
+.source-card.unused {
+  opacity: 0.55;
+}
+
+.source-unused-badge {
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  color: rgba(245, 247, 255, 0.6);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .source-card-header {

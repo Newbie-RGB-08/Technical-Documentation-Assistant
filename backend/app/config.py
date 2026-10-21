@@ -81,6 +81,9 @@ class Settings(BaseSettings):
     entity_coverage_min: float = 0.50
     stale_doc_days: int = 180
     local_retrieval_candidate_n: int = 20
+    # 重排后的相关性下限：低于绝对/相对门槛的片段不进入证据与来源
+    retrieval_min_score: float = 0.05
+    retrieval_relative_score: float = 0.25
 
     # ---- 线上检索（PRD 附录 E.9） ----
     web_search_enabled: bool = True
