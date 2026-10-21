@@ -43,7 +43,7 @@ def test_build_sources_returns_all_new_fields():
     assert a["source_url"] == "https://example.com/chromadb"
     assert a["score"] == 0.95
     assert a["excerpt"].startswith("ChromaDB 的 PersistentClient")
-    # V1.2 新增合并字段：12 项字段集必须完整（缺字段会让前端合并/联动失效）
+    # V1.2 新增合并字段 + V1.4 来源/时间/可信级别：必须完整
     assert set(a.keys()) == {
         "index",
         "indices",
@@ -54,10 +54,16 @@ def test_build_sources_returns_all_new_fields():
         "headings",
         "source_type",
         "source_url",
+        "origin",
+        "retrieved_at",
+        "trust_level",
         "excerpt",
         "excerpts",
         "score",
     }
+    # V1.4：web chunk 的 origin/trust_level 来自 metadata，缺省从 source_url 推断
+    assert a["origin"] == "web_search"
+    assert a["trust_level"] in ("web_medium", "local_high")
     # 单片段组：indices 自洽，代表 index 即组内首个片段序号
     assert a["indices"] == [a["index"]]
     assert a["chunk_count"] == 1

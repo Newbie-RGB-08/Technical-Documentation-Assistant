@@ -63,6 +63,25 @@ def test_document_upsert_get_delete():
     assert store.delete_document("test_docs/a.md") == -1
 
 
+def test_get_document_by_source_url():
+    store = _store()
+    store.upsert_document(
+        {
+            "file_path": "test_docs/web-page.md",
+            "source_type": "tech_doc",
+            "title": "Web Page",
+            "source_url": "https://example.com/doc",
+            "content_hash": "9" * 64,
+            "chunk_count": 2,
+        }
+    )
+    found = store.get_document_by_source_url("https://example.com/doc")
+    assert found and found["file_path"] == "test_docs/web-page.md"
+    assert found["source_url"] == "https://example.com/doc"
+    assert store.get_document_by_source_url("https://example.com/other") is None
+    assert store.get_document_by_source_url("") is None
+
+
 def test_chunks_mapping_roundtrip():
     store = _store()
     doc_id = store.upsert_document(

@@ -21,6 +21,8 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     top_k: int = Field(default=5, ge=1, le=20)
     model_id: str | None = None
+    web_mode: str | None = None  # auto / off / force
+    answer_mode: str | None = None  # hybrid / strict / stream
 
 
 class SourceItem(BaseModel):
@@ -29,6 +31,14 @@ class SourceItem(BaseModel):
     heading_path: str
     excerpt: str
     score: float
+    # V1.4 可选字段：老会话与旧 payload 无需迁移
+    title: str | None = None
+    source_type: str | None = None
+    source_url: str | None = None
+    origin: str | None = None
+    retrieved_at: str | None = None
+    trust_level: str | None = None
+    is_hybrid: bool | None = None
 
 
 class ModelOption(BaseModel):
@@ -39,5 +49,5 @@ class ModelOption(BaseModel):
     available: bool
 
 
-# SSE 事件类型（PRD 3.5.2）：meta / sources / content / confirm / error / done
-SSE_EVENTS = ("meta", "sources", "content", "confirm", "error", "done")
+# SSE 事件类型（PRD 3.5.2 + V1.4 status）：meta / status / sources / content / confirm / error / done
+SSE_EVENTS = ("meta", "status", "sources", "content", "confirm", "error", "done")

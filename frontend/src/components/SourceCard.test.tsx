@@ -221,6 +221,43 @@ describe("SourceCard 合并展示（V1.2）", () => {
   });
 });
 
+describe("SourceCard V1.4 联网徽章与抓取时间", () => {
+  const ONLINE: SourceItem = {
+    index: 2,
+    title: "Chroma 持久化指南",
+    file_path: "D:/docs/tech_docs/web/example.com-abcdef12.md",
+    source_type: "tech_doc",
+    source_url: "https://example.com/chroma",
+    origin: "web_search",
+    trust_level: "web_medium",
+    retrieved_at: "2026-03-01T10:00:00+08:00",
+    excerpt: "ChromaDB 通过本地目录持久化。",
+    score: 0.5,
+  };
+
+  it("联网来源显示「联网检索」徽章与抓取日期", () => {
+    render(<SourceCard source={ONLINE} />);
+    expect(screen.getByText("联网检索")).toBeInTheDocument();
+    expect(screen.getByText("抓取于 2026-03-01")).toBeInTheDocument();
+  });
+
+  it("本地来源不显示联网徽章", () => {
+    render(<SourceCard source={LOCAL_SOURCE} />);
+    expect(screen.queryByText("联网检索")).not.toBeInTheDocument();
+    expect(screen.queryByText(/抓取于/)).not.toBeInTheDocument();
+  });
+
+  it("本地来源即使带 source_url 也不误标为联网", () => {
+    const local: SourceItem = {
+      ...LOCAL_SOURCE,
+      source_url: "https://example.com/local",
+      origin: "local",
+    };
+    render(<SourceCard source={local} />);
+    expect(screen.queryByText("联网检索")).not.toBeInTheDocument();
+  });
+});
+
 describe("SourceCard hybrid 双入口（V1.3）", () => {
   const HYBRID: SourceItem = {
     index: 1,

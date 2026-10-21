@@ -556,3 +556,83 @@ select {
     max-width: 94%;
   }
 }
+
+/* ---- V1.4：答案状态 / 联网来源 / 检索阶段 ---- */
+.message-role {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.message-status-badge {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+}
+
+.message-status-badge.warn {
+  background: rgba(255, 196, 92, 0.16);
+  color: #ffd98a;
+  border-color: rgba(255, 196, 92, 0.35);
+}
+
+.message-status-badge.info {
+  background: rgba(100, 180, 255, 0.16);
+  color: #a8d7ff;
+  border-color: rgba(100, 180, 255, 0.35);
+}
+
+.message-status-badge.muted {
+  background: rgba(200, 205, 220, 0.14);
+  color: rgba(235, 238, 247, 0.72);
+  border-color: rgba(200, 205, 220, 0.28);
+}
+
+.message-retry {
+  margin-top: 10px;
+  border: 1px solid rgba(111, 168, 255, 0.45);
+  background: rgba(111, 168, 255, 0.16);
+  color: #cfe2ff;
+  border-radius: 999px;
+  padding: 4px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.message-retry:hover {
+  background: rgba(111, 168, 255, 0.3);
+}
+
+.stage-pill {
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #cfe2ff;
+  background: rgba(111, 168, 255, 0.16);
+  border: 1px solid rgba(111, 168, 255, 0.32);
+}
+
+.source-origin-badge {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: rgba(140, 120, 255, 0.18);
+  color: #d3c8ff;
+  border: 1px solid rgba(140, 120, 255, 0.35);
+}
+
+.source-fetched-at {
+  font-size: 11px;
+  color: rgba(235, 238, 247, 0.6);
+}
+
+.panel-status-badge {
+  margin-left: 8px;
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: rgba(111, 168, 255, 0.16);
+  color: #cfe2ff;
+  border: 1px solid rgba(111, 168, 255, 0.32);
+}

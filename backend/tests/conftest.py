@@ -10,7 +10,6 @@ import sqlalchemy as sa
 
 from app.config import get_settings
 from app.services.metadata_store import MySQLMetadataStore
-from app.services.vector_store import ChromaStore
 
 SAMPLE_NOTES = {
     "a_chroma.md": (
@@ -39,6 +38,9 @@ def _ensure_test_db() -> None:
 
 @pytest.fixture(scope="session")
 def stores(tmp_path_factory):
+    # 延迟导入：只有真正需要 stores fixture 的测试才会触发 chromadb/sentence-transformers
+    from app.services.vector_store import ChromaStore
+
     chroma_dir = tmp_path_factory.mktemp("chroma")
     _ensure_test_db()
     return ChromaStore(persist_path=str(chroma_dir)), MySQLMetadataStore(url=_test_mysql_url())

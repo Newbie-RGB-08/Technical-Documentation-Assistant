@@ -75,6 +75,12 @@ def scan_markdown_files(directory: str | Path, source_type: str = "personal_note
                 "created_at": str(fm.get("created_at") or meta["created_at"]),
                 "updated_at": str(fm.get("updated_at") or meta["updated_at"]),
                 "source_url": str(fm.get("source_url") or ""),
+                "canonical_url": str(fm.get("canonical_url") or ""),
+                "origin": str(fm.get("origin") or ""),
+                "retrieved_at": str(fm.get("retrieved_at") or ""),
+                "expires_at": str(fm.get("expires_at") or ""),
+                "search_query": str(fm.get("search_query") or ""),
+                "provider": str(fm.get("provider") or ""),
                 "content": body,
             }
         )

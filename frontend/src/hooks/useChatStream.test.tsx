@@ -29,6 +29,84 @@ const MERGED: SourceItem = {
   score: 0.094,
 };
 
+describe("useChatStream V1.4 状态与重试", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("status 事件更新阶段，done 写入 answer_status/request_id", async () => {
+    (streamChat as any).mockImplementation(
+      async ({ onEvent }: { onEvent: (e: any) => void }) => {
+        onEvent({ event: "meta", data: { model: "m", provider: "p", task_type: "generate" } });
+        onEvent({ event: "status", data: { stage: "verifying" } });
+        onEvent({ event: "content", data: { text: "答案正文" } });
+        onEvent({
+          event: "done",
+          data: {
+            session_id: "sess-v14",
+            answer_status: "extractive",
+            verified: false,
+            fallback_level: 2,
+            request_id: "req-1",
+            interrupted: false,
+          },
+        });
+      },
+    );
+
+    const { result } = renderHook(() => useChatStream(null));
+    await act(async () => {
+      await result.current.send("ChromaDB 如何持久化？");
+    });
+
+    await waitFor(() => expect(result.current.streaming).toBe(false));
+    const assistant = result.current.messages.find((m) => m.role === "assistant")!;
+    expect(assistant.answer_status).toBe("extractive");
+    expect(assistant.request_id).toBe("req-1");
+    expect(assistant.interrupted).toBe(false);
+    expect(result.current.stage).toBeNull();
+  });
+
+  it("中断后 retry 重发同一个问题", async () => {
+    const calls: string[] = [];
+    (streamChat as any).mockImplementation(
+      async ({ question, onEvent }: { question: string; onEvent: (e: any) => void }) => {
+        calls.push(question);
+        if (calls.length === 1) {
+          onEvent({ event: "content", data: { text: "部分内容" } });
+          onEvent({
+            event: "done",
+            data: { session_id: "sess-retry", answer_status: "interrupted", interrupted: true },
+          });
+        } else {
+          onEvent({
+            event: "done",
+            data: { session_id: "sess-retry", answer_status: "verified", verified: true },
+          });
+        }
+      },
+    );
+
+    const { result } = renderHook(() => useChatStream(null));
+    await act(async () => {
+      await result.current.send("ChromaDB 如何持久化？");
+    });
+    await waitFor(() => expect(result.current.streaming).toBe(false));
+    const first = result.current.messages.find((m) => m.role === "assistant")!;
+    expect(first.interrupted).toBe(true);
+    expect(first.answer_status).toBe("interrupted");
+
+    await act(async () => {
+      result.current.retry();
+    });
+    await waitFor(() => expect(calls).toEqual(["ChromaDB 如何持久化？", "ChromaDB 如何持久化？"]));
+    await waitFor(() => {
+      const assistants = result.current.messages.filter((m) => m.role === "assistant");
+      expect(assistants[assistants.length - 1].answer_status).toBe("verified");
+    });
+  });
+});
+
 describe("useChatStream 来源合并透传（V1.2）", () => {
   afterEach(() => {
     vi.clearAllMocks();

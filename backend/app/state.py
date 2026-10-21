@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from functools import partial
 
 from app.config import get_settings
 from app.core.bm25_index import BM25Index
@@ -15,6 +16,11 @@ from app.services.llm_gateway import LLMGateway
 from app.services.metadata_store import MySQLMetadataStore
 from app.services.session_store import SessionStore
 from app.services.vector_store import ChromaStore
+from app.services.web_cache_store import WebCacheStore
+from app.services.web_fetcher import fetch_pages
+from app.services.web_search import WebSearchGateway, build_providers
+from app.services.web_writeback import WebWriteback, WebWritebackQueue
+from app.core.circuit_breaker import CircuitBreaker
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +35,12 @@ class AppState:
     retriever: HybridRetriever
     question_scorer: QuestionScorer
     retrieval_scorer: RetrievalScorer
+    web_gateway: WebSearchGateway | None = None
+    web_fetcher: object | None = None
+    circuit_breaker: CircuitBreaker | None = None
+    web_cache: WebCacheStore | None = None
+    web_writeback: WebWriteback | None = None
+    writeback_queue: WebWritebackQueue | None = None
 
     @classmethod
     def build(cls) -> "AppState":
@@ -53,7 +65,49 @@ class AppState:
         question_scorer = QuestionScorer(domain_terms=domain_terms, session_store=session_store)
         retrieval_scorer = build_retrieval_scorer(metadata)
 
-        return cls(
+        circuit_breaker = CircuitBreaker()
+        web_cache = WebCacheStore()
+        web_gateway: WebSearchGateway | None = None
+        web_fetcher = None
+        web_writeback: WebWriteback | None = None
+        writeback_queue: WebWritebackQueue | None = None
+        if settings.web_search_enabled:
+            providers = build_providers(settings)
+            if providers:
+                web_gateway = WebSearchGateway(
+                    providers, cache=web_cache, breaker=circuit_breaker
+                )
+                web_fetcher = partial(fetch_pages, cache=web_cache)
+                logger.info(
+                    "线上检索就绪：%s",
+                    ", ".join(provider.name for provider in providers),
+                )
+
+        # 写回后的索引刷新：回调持有 state 引用，构建完成后再注入
+        holder: dict = {}
+
+        def _on_ingested(payload: dict) -> None:
+            try:
+                bm25.load_from_chroma(chroma)
+            except Exception as exc:  # noqa: BLE001 - 刷新失败不影响回答
+                logger.warning("写回后 BM25 刷新失败: %s", exc)
+            current = holder.get("state")
+            if current is not None:
+                try:
+                    current.retrieval_scorer = build_retrieval_scorer(metadata)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("写回后检索评分器刷新失败: %s", exc)
+            logger.info("网页写回完成: %s", payload.get("file_path"))
+
+        web_writeback = WebWriteback(
+            vector_store=chroma,
+            metadata_store=metadata,
+            on_ingested=_on_ingested,
+        )
+        if web_gateway is not None:
+            writeback_queue = WebWritebackQueue(web_writeback, auto_start=True)
+
+        state = cls(
             chroma=chroma,
             metadata=metadata,
             session_store=session_store,
@@ -62,7 +116,15 @@ class AppState:
             retriever=retriever,
             question_scorer=question_scorer,
             retrieval_scorer=retrieval_scorer,
+            web_gateway=web_gateway,
+            web_fetcher=web_fetcher,
+            circuit_breaker=circuit_breaker,
+            web_cache=web_cache,
+            web_writeback=web_writeback,
+            writeback_queue=writeback_queue,
         )
+        holder["state"] = state
+        return state
 
 
 def build_retrieval_scorer(metadata: MySQLMetadataStore) -> RetrievalScorer:

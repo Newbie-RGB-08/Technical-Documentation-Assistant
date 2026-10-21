@@ -54,6 +54,64 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 60.0
     llm_max_retries: int = 2
 
+    # ---- V1.4 答案模式与严格校验（PRD 附录 E.14） ----
+    answer_mode: str = "hybrid"  # hybrid / strict / stream
+    strict_verification_enabled: bool = True
+    verification_max_repair_retries: int = 1
+    max_unsupported_claim_ratio: float = 0.10
+    critical_entity_check: bool = True
+    general_stream_enabled: bool = True
+    general_stream_requires_concept_only: bool = True
+    extractive_fallback_enabled: bool = True
+    session_history_verified_only: bool = True
+
+    # ---- 上下文与输入防线 ----
+    max_question_chars: int = 4000
+    max_context_chars: int = 8000
+    max_answer_chars: int = 4000
+    request_total_timeout_seconds: float = 15.0
+    llm_stage_timeout_seconds: float = 60.0
+
+    # ---- 熔断 ----
+    llm_circuit_breaker_threshold: int = 3
+    circuit_breaker_cooldown_seconds: float = 60.0
+
+    # ---- 本地命中判定 ----
+    kb_hit_threshold: float = 0.45
+    entity_coverage_min: float = 0.50
+    stale_doc_days: int = 180
+    local_retrieval_candidate_n: int = 20
+
+    # ---- 线上检索（PRD 附录 E.9） ----
+    web_search_enabled: bool = True
+    web_search_provider: str = "tavily"
+    web_search_providers: str = "tavily,bing,duckduckgo,searxng"
+    web_search_top_k: int = 5
+    web_fetch_top_n: int = 3
+    web_fetch_concurrency: int = 3
+    web_fetch_timeout_seconds: float = 8.0
+    web_fetch_total_timeout_seconds: float = 12.0
+    web_fetch_min_interval_seconds: float = 1.0
+    web_page_max_bytes: int = 2_000_000
+    web_content_max_chars: int = 200_000
+    web_min_content_chars: int = 300
+    web_search_cache_ttl_hours: int = 24
+    web_candidate_paragraphs: int = 6
+    tavily_api_key: str = ""
+    bing_search_api_key: str = ""
+    searxng_base_url: str = ""
+
+    # ---- 知识写回（PRD 附录 E.10） ----
+    web_writeback_min_relevance: float = 0.45
+    web_cache_ttl_days: int = 30
+    web_writeback_daily_chunk_cap: int = 500
+    web_writeback_max_pages_per_turn: int = 3
+    web_writeback_queue_size: int = 50
+
+    @property
+    def web_search_provider_chain(self) -> list[str]:
+        return [p.strip().lower() for p in self.web_search_providers.split(",") if p.strip()]
+
     @property
     def mysql_url(self) -> str:
         # 密码可能含特殊字符（如 # @ !），必须 URL 编码，否则 SQLAlchemy 解析错乱

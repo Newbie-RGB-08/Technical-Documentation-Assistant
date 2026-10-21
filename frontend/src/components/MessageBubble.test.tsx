@@ -72,3 +72,47 @@ describe("MessageBubble 引用点击联动", () => {
     expect(screen.getByLabelText("正在生成")).toBeInTheDocument();
   });
 });
+
+describe("MessageBubble V1.4 答案状态徽章", () => {
+  it("未验证通用回答显示「未验证」徽章", () => {
+    render(
+      <MessageBubble
+        message={{ ...makeMessage("通用说明"), answer_status: "unverified_general" }}
+      />,
+    );
+    expect(screen.getByText("未验证")).toBeInTheDocument();
+  });
+
+  it("摘录兜底显示「仅摘录」徽章", () => {
+    render(
+      <MessageBubble message={{ ...makeMessage("摘录内容"), answer_status: "extractive" }} />,
+    );
+    expect(screen.getByText("仅摘录")).toBeInTheDocument();
+  });
+
+  it("中断消息显示「已中断」与重试按钮", () => {
+    const onRetry = vi.fn();
+    render(
+      <MessageBubble
+        message={{
+          ...makeMessage("部分内容"),
+          answer_status: "interrupted",
+          interrupted: true,
+        }}
+        onRetry={onRetry}
+      />,
+    );
+    expect(screen.getByText("已中断")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("验证通过的答案不显示状态徽章", () => {
+    render(
+      <MessageBubble message={{ ...makeMessage("已核验内容"), answer_status: "verified" }} />,
+    );
+    expect(screen.queryByText("未验证")).not.toBeInTheDocument();
+    expect(screen.queryByText("仅摘录")).not.toBeInTheDocument();
+    expect(screen.queryByText("已中断")).not.toBeInTheDocument();
+  });
+});

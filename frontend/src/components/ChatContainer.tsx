@@ -6,10 +6,24 @@ import ConfirmDialog from "./ConfirmDialog";
 import MessageBubble from "./MessageBubble";
 import ModelSelector from "./ModelSelector";
 
+/** V1.4：检索阶段文案 */
+const STAGE_LABELS: Record<string, string> = {
+  scoring: "评分中",
+  local_retrieval: "本地检索",
+  web_searching: "联网搜索",
+  web_fetching: "抓取网页",
+  generating: "生成中",
+  verifying: "校验中",
+  repairing: "修复中",
+  writing_back: "写回中",
+  general_streaming: "通用回答",
+};
+
 export default function ChatContainer() {
   const [modelId, setModelId] = useState<string | null>(null);
   const chat = useChatStream(modelId);
   const listRef = useRef<HTMLDivElement>(null);
+  const lastAssistant = [...chat.messages].reverse().find((m) => m.role === "assistant");
 
   useEffect(() => {
     const el = listRef.current;
@@ -24,6 +38,9 @@ export default function ChatContainer() {
           <p>个人技术文档研究助手</p>
         </div>
         <div className="header-actions">
+          {chat.stage && STAGE_LABELS[chat.stage] && (
+            <span className="stage-pill">{STAGE_LABELS[chat.stage]}</span>
+          )}
           {chat.meta && (
             <span className="meta-pill">
               {chat.meta.provider} / {chat.meta.model}
@@ -57,6 +74,7 @@ export default function ChatContainer() {
                 key={message.id}
                 message={message}
                 onCitationClick={chat.openCitation}
+                onRetry={message.role === "assistant" ? chat.retry : undefined}
               />
             ))
           )}
@@ -73,6 +91,7 @@ export default function ChatContainer() {
         open={chat.panelOpen}
         onClose={() => chat.setPanelOpen(false)}
         onSelect={chat.setActiveSource}
+        answerStatus={lastAssistant?.answer_status ?? null}
       />
 
       {chat.confirmPayload && (

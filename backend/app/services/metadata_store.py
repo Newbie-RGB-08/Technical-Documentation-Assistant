@@ -146,6 +146,18 @@ class MySQLMetadataStore(MetadataStore):
             ).scalar_one_or_none()
             return self._doc_dict(record) if record else None
 
+    def get_document_by_source_url(self, source_url: str) -> dict | None:
+        url = str(source_url or "").strip()
+        if not url:
+            return None
+        with Session(self.engine) as session:
+            record = session.execute(
+                select(Document)
+                .where(Document.source_url == url)
+                .order_by(Document.id)
+            ).scalars().first()
+            return self._doc_dict(record) if record else None
+
     def list_documents(self, source_type: str | None = None) -> list[dict]:
         with Session(self.engine) as session:
             stmt = select(Document).order_by(Document.id)

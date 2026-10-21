@@ -43,6 +43,12 @@ def prepare_chunks(
         "created_at": file_record.get("created_at", ""),
         "updated_at": file_record.get("updated_at", ""),
         "source_url": file_record.get("source_url") or "",
+        "canonical_url": file_record.get("canonical_url") or "",
+        "origin": file_record.get("origin") or "",
+        "retrieved_at": file_record.get("retrieved_at") or "",
+        "expires_at": file_record.get("expires_at") or "",
+        "search_query": file_record.get("search_query") or "",
+        "provider": file_record.get("provider") or "",
         "content_hash": content_hash or compute_content_hash(file_record["content"]),
     }
     chunks = chunk_markdown(
@@ -61,8 +67,12 @@ def ingest_files(
     force_reingest: bool = False,
     chunk_size: int = 512,
     chunk_overlap: int = 64,
+    on_file_ingested=None,
 ) -> dict:
-    """入库一批文件，返回 {ingested, skipped, failed, total_chunks, errors}。"""
+    """入库一批文件，返回 {ingested, skipped, failed, total_chunks, errors}。
+
+    on_file_ingested：单文件成功入库后的回调（用于后台刷新 BM25 / 关键字权重）。
+    """
     summary = {"ingested": 0, "skipped": 0, "failed": 0, "total_chunks": 0, "errors": []}
 
     for record in files:
@@ -105,6 +115,18 @@ def ingest_files(
 
             summary["ingested"] += 1
             summary["total_chunks"] += len(chunks)
+            if on_file_ingested is not None:
+                try:
+                    on_file_ingested(
+                        {
+                            "file_path": file_path,
+                            "document_id": doc_id,
+                            "chunk_count": len(chunks),
+                            "source_type": record["source_type"],
+                        }
+                    )
+                except Exception as exc:  # noqa: BLE001 - 回调失败不影响入库结果
+                    summary["errors"].append({"file_path": file_path, "error": str(exc)})
         except Exception as exc:  # noqa: BLE001 - 单文件失败不阻断整批
             summary["failed"] += 1
             summary["errors"].append({"file_path": file_path, "error": str(exc)})

@@ -149,6 +149,54 @@ def test_prepare_chunks_carries_source_url():
         assert c["metadata"]["source_type"] == "tech_doc"
 
 
+def test_prepare_chunks_carries_web_metadata():
+    """网页写回的新元数据透传到每个 chunk（E.10.2）。"""
+    from app.services.ingest_pipeline import prepare_chunks
+
+    record = {
+        "file_path": "/tmp/web.md",
+        "source_type": "tech_doc",
+        "title": "T",
+        "tags": ["web"],
+        "content": "# 标题\n\n网页正文片段。",
+        "source_url": "https://example.com/doc",
+        "canonical_url": "https://example.com/doc",
+        "origin": "web_search",
+        "retrieved_at": "2026-03-01T10:00:00+08:00",
+        "expires_at": "2026-03-31T10:00:00+08:00",
+        "search_query": "示例查询",
+        "provider": "tavily",
+    }
+    chunks = prepare_chunks(record, chunk_size=1000, chunk_overlap=0)
+    assert chunks
+    for c in chunks:
+        meta = c["metadata"]
+        assert meta["origin"] == "web_search"
+        assert meta["canonical_url"] == "https://example.com/doc"
+        assert meta["retrieved_at"] == "2026-03-01T10:00:00+08:00"
+        assert meta["expires_at"] == "2026-03-31T10:00:00+08:00"
+        assert meta["search_query"] == "示例查询"
+        assert meta["provider"] == "tavily"
+
+
+def test_ingest_calls_on_file_ingested_callback(stores, tmp_path):
+    vector_store, metadata_store = stores
+    p = tmp_path / "callback.md"
+    p.write_text("# 回调\n\n写回后需要刷新索引。", encoding="utf-8")
+    files = scan_markdown_files(tmp_path)
+    events = []
+    summary = ingest_files(
+        files, vector_store, metadata_store,
+        force_reingest=True, on_file_ingested=events.append,
+    )
+    assert summary["ingested"] == 1
+    assert len(events) == 1
+    assert events[0]["file_path"] == str(p)
+    assert events[0]["source_type"] == "personal_note"
+    assert events[0]["chunk_count"] > 0
+    assert events[0]["document_id"] > 0
+
+
 def test_ingest_writes_source_url_to_document_and_chunks(stores, tmp_path):
     """完整入库流程把 source_url 同时写进 MySQL documents 与 Chroma chunk metadata。"""
     from app.services.ingest_pipeline import ingest_files
