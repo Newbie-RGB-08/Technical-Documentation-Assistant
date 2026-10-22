@@ -111,6 +111,25 @@ select {
   color: #d8f2ff;
 }
 
+/* V1.5.x：诊断明细（Provider 状态行）折叠在横幅内 */
+.banner .detail {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  opacity: 0.78;
+  white-space: pre-line;
+}
+
+.model-selector optgroup {
+  color: #9fb7d9;
+  font-weight: 600;
+}
+
+.model-selector optgroup option {
+  color: #f5f7ff;
+  font-weight: 400;
+}
+
 .chat-main {
   min-height: 0;
   border-radius: 28px;

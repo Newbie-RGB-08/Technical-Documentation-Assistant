@@ -36,3 +36,13 @@ desktop.ini
 # Logs & temp
 *.log
 backend/scripts/_tmp_*.py
+backend/jieba.cache
+backend/pytest-of-Administrator/
+.tmp-ci/
+.hf-cache/
+
+# pip 安装残留
+pip-*/
+
+# 运行时缓存
+backend/data/web_cache.db

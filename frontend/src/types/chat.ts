@@ -64,6 +64,8 @@ export interface ConfirmPayload {
 export interface MetaPayload {
   model: string;
   provider: string;
+  // V1.5.x 新增：当前模型选择与 auto 标记（自动绑定兜底时 auto=true）
+  selected?: { provider: string; model: string; auto: boolean } | null;
   task_type: string;
   complexity?: string | null;
   complexity_score?: number;
@@ -104,4 +106,32 @@ export interface ModelOption {
   provider: string;
   type: string;
   available: boolean;
+  // V1.5.x 新增（联合清单）：来源 / reason / 本地发现元数据（均可选 → 旧后端降级）
+  source?: "config" | "discovered" | null;
+  reason?: string | null;
+  parameter_size?: number | null;
+  family?: string | null;
+  missing_models?: string[] | null;
+}
+
+/** V1.5.x：/api/providers/status 响应（Provider 健康快照 + 自动绑定） */
+export interface ProviderStatusRow {
+  name: string;
+  type: "local" | "cloud";
+  available: boolean;
+  reason: string;
+  detail?: string;
+  installed_models: Array<{
+    name: string;
+    parameter_size: number | null;
+    family: string | null;
+    size_bytes?: number;
+  }>;
+  selected_for: string[];
+}
+
+export interface ProviderStatusReport {
+  enabled: boolean;
+  providers: ProviderStatusRow[];
+  bindings: Record<string, { provider: string; model: string; reason: string } | null>;
 }

@@ -54,6 +54,14 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 60.0
     llm_max_retries: int = 2
 
+    # ---- Provider 健康检测与本地模型发现（启动自检，V1.5.x） ----
+    provider_probe_enabled: bool = True                     # False 时整体退回旧"逐次 is_available"行为
+    provider_probe_timeout_seconds: float = 2.5             # 单 Provider 探测超时
+    provider_health_ttl_seconds: float = 30.0               # 健康快照/发现清单 TTL
+    local_model_exclude_keywords: str = (
+        "embed,bge,nomic,minilm,mxbai,rerank,guard,whisper,gte,sentence"
+    )                                                       # 发现清单按名称过滤非对话模型
+
     # ---- V1.4 答案模式与严格校验（PRD 附录 E.14） ----
     answer_mode: str = "hybrid"  # hybrid / strict / stream
     strict_verification_enabled: bool = True

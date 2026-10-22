@@ -20,19 +20,35 @@ _BATCH_SIZE = 100
 class ChromaStore(VectorStore):
     def __init__(self, persist_path: str | None = None, model_name: str | None = None):
         settings = get_settings()
-        self.client = chromadb.PersistentClient(path=str(persist_path or settings.chroma_path))
-        self.embed_fn = SentenceTransformerEmbeddingFunction(
-            model_name=model_name or settings.embedding_model
-        )
+        self._persist_path = str(persist_path or settings.chroma_path)
+        self._model_name = model_name or settings.embedding_model
+        self._client: chromadb.PersistentClient | None = None
+        self._embed_fn: SentenceTransformerEmbeddingFunction | None = None
         self._lock = threading.Lock()
+        self._init_error: str | None = None
+
+    def _ensure_client(self) -> chromadb.PersistentClient:
+        if self._client is not None:
+            return self._client
+        if self._init_error:
+            raise RuntimeError(f"ChromaDB 初始化失败: {self._init_error}") from None
+        try:
+            self._client = chromadb.PersistentClient(path=self._persist_path)
+            self._embed_fn = SentenceTransformerEmbeddingFunction(model_name=self._model_name)
+        except Exception as exc:  # noqa: BLE001
+            self._init_error = f"{type(exc).__name__}: {exc}"
+            raise RuntimeError(f"ChromaDB 初始化失败: {self._init_error}") from exc
+        return self._client
 
     def _collection(self, source_type: str):
         name = _COLLECTIONS.get(source_type)
         if name is None:
             raise ValueError(f"未知 source_type: {source_type}")
-        return self.client.get_or_create_collection(
+        client = self._ensure_client()
+        assert self._embed_fn is not None
+        return client.get_or_create_collection(
             name=name,
-            embedding_function=self.embed_fn,
+            embedding_function=self._embed_fn,
             metadata={"hnsw:space": "cosine"},
         )
 

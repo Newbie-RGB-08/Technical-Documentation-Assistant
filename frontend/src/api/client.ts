@@ -1,5 +1,5 @@
 import { createSSEParser, type ParsedSSE } from "./sse";
-import type { ModelOption } from "../types/chat";
+import type { ModelOption, ProviderStatusReport } from "../types/chat";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
@@ -12,8 +12,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
-export function getModels(): Promise<ModelOption[]> {
-  return request<ModelOption[]>("/models");
+export function getModels(refresh = false): Promise<ModelOption[]> {
+  return request<ModelOption[]>(`/models${refresh ? "?refresh=true" : ""}`);
+}
+
+/** V1.5.x：Provider 健康快照与自动绑定信息（错误诊断/横幅消费） */
+export function getProviderStatus(refresh = false): Promise<ProviderStatusReport> {
+  return request<ProviderStatusReport>(`/providers/status${refresh ? "?refresh=true" : ""}`);
 }
 
 export function getHealth(): Promise<{ status: string; checks: Record<string, boolean> }> {

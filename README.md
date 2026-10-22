@@ -193,6 +193,25 @@
 
 > 两个脚本为 GBK + CRLF 编码（Windows 控制台默认代码页 936），编辑时请勿改成 UTF-8 或 LF。
 
+### 启动自检与自动发现（V1.5.x）
+
+后端启动时对已配置的 Provider 做一次并发健康探测（TTL 30s 缓存，失败即失效重探），并自动发现本地 Ollama 已安装的对话模型：
+
+- **配置模型已安装** → 照常使用，启动日志打出「本地模型在线，共发现 N 个候选」
+- **配置模型未安装** → 自动改用本地已装模型兜底（家族匹配优先；generate 取参数量最大、rewrite 取最小），日志打出 `配置模型未安装，已自动选用本地模型: …`，前端右上角下拉框可直接切换
+- **Ollama 未启动 / 未装模型** → 结合是否配置了云端 Key 打出相应引导日志；两者皆无则启动日志给出 ER­ROR 诊断
+- 自动绑定只在**运行时**生效，不写任何配置文件；配置恢复可用后下一次探测即释放绑定
+
+相关配置（`backend/.env`，详见 `.env.example`）：`PROVIDER_PROBE_ENABLED` / `PROVIDER_PROBE_TIMEOUT_SECONDS` / `PROVIDER_HEALTH_TTL_SECONDS` / `LOCAL_MODEL_EXCLUDE_KEYWORDS`。
+
+配套接口：
+
+| 接口 | 作用 |
+| --- | --- |
+| `GET /api/models` | 联合清单：配置声明 + 本地发现（含 `source`/`reason`/`parameter_size`），`?refresh=true` 强制重探 |
+| `GET /api/providers/status` | 各 Provider 健康快照 + 本地已装模型 + 自动绑定信息，`?refresh=true` 同上 |
+| `POST /api/chat/stream` | 全链无可用模型时返回 `E_MODEL_UNAVAILABLE` 结构化引导（SSE `error` 事件，四象限诊断，不点名具体型号） |
+
 ### 手动启动
 
 ```bash

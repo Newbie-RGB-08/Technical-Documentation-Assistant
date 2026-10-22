@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useChatStream } from "../hooks/useChatStream";
+import { useProviderStatus } from "../hooks/useProviderStatus";
 import ChatInput from "./ChatInput";
 import CitationPanel from "./CitationPanel";
 import ConfirmDialog from "./ConfirmDialog";
@@ -22,8 +23,20 @@ const STAGE_LABELS: Record<string, string> = {
 export default function ChatContainer() {
   const [modelId, setModelId] = useState<string | null>(null);
   const chat = useChatStream(modelId);
+  const provider = useProviderStatus(modelId, setModelId);
   const listRef = useRef<HTMLDivElement>(null);
   const lastAssistant = [...chat.messages].reverse().find((m) => m.role === "assistant");
+
+  // V1.5.x：meta.selected.auto（自动绑定）→ 每轮请求后刷新一次模型可用性
+  const autoSelected = chat.meta?.selected?.auto === true;
+  const refreshedForRef = useRef<string | null>(null);
+  useEffect(() => {
+    const requestId = chat.meta?.request_id ?? null;
+    if (autoSelected && requestId && refreshedForRef.current !== requestId) {
+      refreshedForRef.current = requestId;
+      void provider.refresh();
+    }
+  }, [autoSelected, chat.meta?.request_id, provider.refresh]);
 
   useEffect(() => {
     const el = listRef.current;
@@ -55,7 +68,7 @@ export default function ChatContainer() {
               {chat.meta.provider} / {chat.meta.model}
             </span>
           )}
-          <ModelSelector value={modelId} onChange={setModelId} />
+          <ModelSelector value={modelId} onChange={setModelId} models={provider.models} loaded={provider.loaded} />
           <button
             type="button"
             className="ghost-button"
@@ -67,6 +80,19 @@ export default function ChatContainer() {
         </div>
       </header>
 
+      {provider.banner && (
+        <div className={`banner ${provider.banner.kind} glass`} role="status">
+          <span>{provider.banner.text}</span>
+          {provider.banner.kind === "error" && provider.banner.detail && (
+            <span className="detail">{provider.banner.detail}</span>
+          )}
+        </div>
+      )}
+      {autoSelected && provider.banner?.kind !== "error" && (
+        <div className="banner notice glass" role="status">
+          <span>配置中的模型未安装，系统已自动选用本地模型回答；可在右上角下拉框切换。</span>
+        </div>
+      )}
       {chat.error && <div className="banner error glass">{chat.error}</div>}
       {chat.notice && <div className="banner notice glass">{chat.notice}</div>}
 

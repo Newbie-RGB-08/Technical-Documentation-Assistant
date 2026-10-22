@@ -205,6 +205,23 @@
 
 ---
 
+## 阶段 8：本地检测、自动发现与自动绑定（V1.5.x，2026-10-22）
+
+不绑定具体型号：自动探查本地已装模型并自动选用，前端下拉框可枚举到发现的模型。
+
+| 模块 | 变更 |
+| --- | --- |
+| `providers/health.py`（新） | Reason 原因码 / LocalModelInfo / ProviderStatus / AutoBinding 域模型与 `list()` 解析（兼容 dict 与 pydantic 形态） |
+| `providers/base.py` | `probe()` 具体默认实现委托旧 `is_available()`（测试 mock 开箱兼容） |
+| `providers/ollama_provider.py` / `openai_provider.py` | 结构化 `probe(timeout)`：一次 `list()` 同时产出服务状态与已装模型清单；云端识别 401/403 → `auth_failed` |
+| `services/llm_gateway.py` | `probe_all` + TTL 健康缓存 + 失效重探；`fit_binding` 自动绑定（家族匹配 → generate 取最大 / rewrite 取最小参数量 → 字典序 fallback）；候选链剔除已知不可用与“模型未装”项；`llm_timeout_seconds` 真正接入调用层 |
+| `main.py` | lifespan 启动自检 + 三态启动日志（不阻断启动） |
+| 协议 | `meta` 事件加可选 `selected:{provider,model,auto}`；`/api/models` 联合清单（`?refresh=`）；`/api/providers/status`；新错误码 `E_MODEL_UNAVAILABLE`（四象限引导，不点名型号） |
+| 前端 | `useProviderStatus` 上提数据 + 横幅；`ModelSelector` 本地/云端分组 + 参数量后缀；`types/chat.ts`/`api/client.ts` 对应扩展 |
+| 测试 | `tests/test_llm_gateway_health.py`（23 用例）、`tests/test_model_status_api.py`（12 用例）、前端 vitest 新增 9 用例 |
+
+---
+
 ## 风险与预案
 
 | 风险 | 影响 | 预案 |

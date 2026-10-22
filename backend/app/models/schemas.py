@@ -47,7 +47,16 @@ class ModelOption(BaseModel):
     provider: str
     type: str
     available: bool
+    # V1.5.x 可选字段（联合清单）：来源/reason/发现元数据
+    source: str | None = None        # "config" | "discovered"
+    reason: str | None = None
+    parameter_size: float | None = None
+    family: str | None = None
+    missing_models: list[str] | None = None
 
+
+# 结构化错误码（V1.5.x / 方案 v2 D5）：无任何可用模型时的引导性错误
+E_MODEL_UNAVAILABLE = "E_MODEL_UNAVAILABLE"
 
 # SSE 事件类型（PRD 3.5.2 + V1.4 status）：meta / status / sources / content / confirm / error / done
 SSE_EVENTS = ("meta", "status", "sources", "content", "confirm", "error", "done")

@@ -105,6 +105,21 @@ def _strip_heading_lines(text: str) -> str:
     ).strip()
 
 
+def _selected_meta(gateway) -> dict | None:
+    """meta.selected（V1.5.x 可选字段）：当前模型选择与 auto 标记。
+
+    优先最近一次成功选择（含自动绑定），其次启动期预选；任何异常都返回 None，
+    保证旧调用方（测试注入的假网关）不受影响。
+    """
+    getter = getattr(gateway, "selected_payload", None)
+    if getter is None:
+        return None
+    try:
+        return getter()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _group_key(index: int, meta: dict) -> str:
     """同一文档的分组键：source_type + 归一化路径。
 
@@ -395,6 +410,7 @@ async def _chat_flow_inner(
     yield "meta", {
         "model": state.gateway.current_model or "auto",
         "provider": state.gateway.current_provider or "auto",
+        "selected": _selected_meta(state.gateway),
         "task_type": "generate",
         "complexity": None,
         "route": None,
@@ -447,6 +463,7 @@ async def _chat_flow_inner(
     yield "meta", {
         "model": state.gateway.current_model or "auto",
         "provider": state.gateway.current_provider or "auto",
+        "selected": _selected_meta(state.gateway),
         "task_type": "generate",
         "complexity": complexity,
         "complexity_score": complexity_score,

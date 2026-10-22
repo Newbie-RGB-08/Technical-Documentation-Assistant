@@ -107,6 +107,32 @@ class MySQLMetadataStore(MetadataStore):
         )
         if create_all:
             Base.metadata.create_all(self.engine)
+        self._ensure_columns()
+
+    def _ensure_columns(self) -> None:
+        """增量迁移：旧库缺 V1.4 新增列 → ALTER TABLE 补齐（只加不删）。"""
+        with self.engine.connect() as conn:
+            for table_name in ("documents", "chunks"):
+                try:
+                    existing = {
+                        row[0]
+                        for row in conn.execute(text(
+                            f"SHOW COLUMNS FROM {table_name}"
+                        )).fetchall()
+                    }
+                except Exception:  # noqa: BLE001 - 表不存在跳过
+                    continue
+                for col_name, col_sql in (
+                    ("source_url", "ALTER TABLE documents ADD COLUMN source_url VARCHAR(512) NULL"),
+                    ("heading_path", "ALTER TABLE chunks ADD COLUMN heading_path VARCHAR(512) NULL"),
+                ):
+                    if col_name in existing:
+                        continue
+                    try:
+                        conn.execute(text(col_sql))
+                        conn.commit()
+                    except Exception:  # noqa: BLE001 - 迁移失败不阻断
+                        conn.rollback()
 
     # ---- documents ----
     def upsert_document(self, doc: dict) -> int:
