@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
+from app.observability import count_api_routes, summarize_route_prefixes
+
 router = APIRouter(prefix="/api")
 
 
@@ -25,7 +27,10 @@ async def providers_status(request: Request, refresh: bool = False):
 async def health(request: Request):
     checks = {"chroma": True, "mysql": True, "sqlite": True}
     try:
-        request.app.state.core.chroma.count("personal_note")
+        chroma = request.app.state.core.chroma
+        # 空集合与尚未创建的集合都应视为健康；任一集合读取失败才降级。
+        for source_type in chroma.source_types():
+            chroma.count(source_type)
     except Exception:  # noqa: BLE001
         checks["chroma"] = False
     try:
@@ -36,4 +41,10 @@ async def health(request: Request):
         request.app.state.core.session_store.get_history("ping", limit=1)
     except Exception:  # noqa: BLE001
         checks["sqlite"] = False
-    return {"status": "ok" if all(checks.values()) else "degraded", "checks": checks}
+    return {
+        "status": "ok" if all(checks.values()) else "degraded",
+        "checks": checks,
+        "started_at": getattr(request.app.state, "started_at", None),
+        "route_count": count_api_routes(request.app),
+        "route_prefixes": summarize_route_prefixes(request.app),
+    }

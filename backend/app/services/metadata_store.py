@@ -5,10 +5,12 @@
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -28,6 +30,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from app.config import get_settings
 from app.services.base_stores import MetadataStore
 
+logger = logging.getLogger(__name__)
+
 
 class Base(DeclarativeBase):
     pass
@@ -37,7 +41,9 @@ class Document(Base):
     __tablename__ = "documents"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     file_path: Mapped[str] = mapped_column(String(512), unique=True)
-    source_type: Mapped[str] = mapped_column(Enum("tech_doc", "personal_note"))
+    source_type: Mapped[str] = mapped_column(
+        Enum("tech_doc", "personal_note", "uploaded_doc")
+    )
     title: Mapped[str | None] = mapped_column(String(255))
     source_url: Mapped[str | None] = mapped_column(String(512))
     content_hash: Mapped[str] = mapped_column(String(64))
@@ -99,15 +105,87 @@ class IngestTask(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class UploadTask(Base):
+    """上传批次（PRD 7.1.3）。"""
+
+    __tablename__ = "upload_tasks"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    task_id: Mapped[str] = mapped_column(String(64), unique=True)
+    status: Mapped[str] = mapped_column(String(32), default="queued")
+    engine: Mapped[str] = mapped_column(String(32), default="auto")
+    total_files: Mapped[int] = mapped_column(Integer, default=0)
+    processed_files: Mapped[int] = mapped_column(Integer, default=0)
+    failed_files: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    __table_args__ = (Index("idx_upload_task_status", "status"),)
+
+
+class UploadFile(Base):
+    """单个上传文件（PRD 7.1.3）。content_hash 为原文件字节的 SHA-256。"""
+
+    __tablename__ = "upload_files"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    upload_id: Mapped[str] = mapped_column(String(64), unique=True)
+    task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    original_filename: Mapped[str] = mapped_column(String(512))
+    stored_path: Mapped[str] = mapped_column(String(1024))
+    markdown_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    doc_format: Mapped[str] = mapped_column(String(16))
+    file_size: Mapped[int] = mapped_column(BigInteger)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(32), default="queued")
+    auto_index: Mapped[bool] = mapped_column(Boolean, default=True)
+    parse_engine: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    chunk_size: Mapped[int] = mapped_column(Integer, default=512)
+    chunk_overlap: Mapped[int] = mapped_column(Integer, default=64)
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    document_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("documents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+    __table_args__ = (
+        Index("idx_upload_file_status", "status"),
+        Index("idx_upload_file_task", "task_id"),
+        Index("idx_upload_file_hash", "content_hash"),
+    )
+
+
+class UploadAsset(Base):
+    """上传文档内的图片/表格资源（PRD 7.1.3）。"""
+
+    __tablename__ = "upload_assets"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    upload_id: Mapped[str] = mapped_column(String(64))
+    asset_type: Mapped[str] = mapped_column(String(16))
+    name: Mapped[str] = mapped_column(String(512))
+    rel_path: Mapped[str] = mapped_column(String(1024))
+    page_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    caption: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ocr_text: Mapped[str | None] = mapped_column(Text(length=16_777_215), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    __table_args__ = (Index("idx_upload_asset_upload", "upload_id"),)
+
+
 class MySQLMetadataStore(MetadataStore):
     def __init__(self, url: str | None = None, create_all: bool = True):
         settings = get_settings()
         self.engine = create_engine(
             url or settings.mysql_url, pool_pre_ping=True, pool_recycle=1800
         )
+        self.source_type_enum_ready = False
         if create_all:
             Base.metadata.create_all(self.engine)
         self._ensure_columns()
+        self._ensure_source_type_enum()
 
     def _ensure_columns(self) -> None:
         """增量迁移：旧库缺 V1.4 新增列 → ALTER TABLE 补齐（只加不删）。"""
@@ -133,6 +211,38 @@ class MySQLMetadataStore(MetadataStore):
                         conn.commit()
                     except Exception:  # noqa: BLE001 - 迁移失败不阻断
                         conn.rollback()
+
+    def _ensure_source_type_enum(self) -> None:
+        """幂等扩展 documents.source_type 枚举；失败只告警，不阻断启动。
+
+        MySQL 的 create_all 不会修改既有 ENUM，因此旧库必须显式 ALTER。
+        上传路由会根据 ``source_type_enum_ready`` 返回明确错误，避免运行到
+        写库阶段才失败。
+        """
+        self.source_type_enum_ready = False
+        if self.engine.dialect.name != "mysql":
+            # 测试/轻量部署可能使用 SQLite；其字符串列天然支持新值。
+            self.source_type_enum_ready = True
+            return
+        try:
+            with self.engine.begin() as conn:
+                row = conn.execute(
+                    text("SHOW COLUMNS FROM documents LIKE 'source_type'")
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError("documents.source_type 列不存在")
+                type_def = str(row[1]).lower()
+                if "uploaded_doc" not in type_def:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE documents MODIFY COLUMN source_type "
+                            "ENUM('tech_doc', 'personal_note', 'uploaded_doc') NOT NULL"
+                        )
+                    )
+                    logger.info("documents.source_type 已扩展 uploaded_doc 枚举")
+            self.source_type_enum_ready = True
+        except Exception as exc:  # noqa: BLE001 - 迁移失败不阻断启动
+            logger.warning("documents.source_type 枚举迁移失败: %s", exc)
 
     # ---- documents ----
     def upsert_document(self, doc: dict) -> int:

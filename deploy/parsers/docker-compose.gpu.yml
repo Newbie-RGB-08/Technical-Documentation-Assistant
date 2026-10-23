@@ -1,0 +1,25 @@
+# P7：GPU override 层。
+# 用法：docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# 需本机具备 NVIDIA GPU + nvidia-container-toolkit。
+services:
+  mineru:
+    environment:
+      - MINERU_USE_CUDA=True
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  paddlex:
+    environment:
+      - PADDLEX_DEVICE=gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -272,6 +272,75 @@ describe("SourceCard V1.4 联网徽章与抓取时间", () => {
   });
 });
 
+describe("SourceCard 上传文档分支（V1.6）", () => {
+  const UPLOAD_SOURCE: SourceItem = {
+    index: 4,
+    title: "产品手册",
+    file_path: "data/uploads/u_20261023_ab12cd34/产品手册.pdf",
+    source_type: "uploaded_doc",
+    origin: "upload",
+    upload_id: "u_20261023_ab12cd34",
+    doc_format: "pdf",
+    original_filename: "产品手册-完整版.pdf",
+    excerpt: "上传文档的解析摘要",
+    score: 0.81,
+  };
+
+  let openSpy: any;
+  let fetchSpy: any;
+
+  beforeEach(() => {
+    openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(() => Promise.resolve(new Response("{}")));
+  });
+
+  afterEach(() => {
+    openSpy.mockRestore();
+    fetchSpy.mockRestore();
+  });
+
+  it("显示上传文档徽章、预览提示与原始文件名，不显示联网徽章", () => {
+    render(<SourceCard source={UPLOAD_SOURCE} />);
+    expect(screen.getByText("上传文档")).toBeInTheDocument();
+    expect(screen.getByText("📄 点击预览解析结果")).toBeInTheDocument();
+    expect(screen.getAllByText("产品手册-完整版.pdf").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("联网检索")).not.toBeInTheDocument();
+  });
+
+  it("点击优先调用 onOpenUpload，且不调用 /api/files/open", () => {
+    const onOpenUpload = vi.fn();
+    render(<SourceCard source={UPLOAD_SOURCE} onOpenUpload={onOpenUpload} />);
+    fireEvent.click(screen.getByRole("button"));
+    expect(onOpenUpload).toHaveBeenCalledWith("u_20261023_ab12cd34");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+
+  it("未提供 onOpenUpload 时回退打开 Markdown，不调用本地打开接口", () => {
+    render(<SourceCard source={UPLOAD_SOURCE} />);
+    fireEvent.click(screen.getByRole("button"));
+    expect(openSpy).toHaveBeenCalledWith(
+      "/api/uploads/u_20261023_ab12cd34/markdown",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("onClick 与上传预览回调同时触发（来源面板激活 + 预览）", () => {
+    const onClick = vi.fn();
+    const onOpenUpload = vi.fn();
+    render(
+      <SourceCard source={UPLOAD_SOURCE} onClick={onClick} onOpenUpload={onOpenUpload} />,
+    );
+    fireEvent.click(screen.getByRole("button"));
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(onOpenUpload).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("SourceCard hybrid 双入口（V1.3）", () => {
   const HYBRID: SourceItem = {
     index: 1,

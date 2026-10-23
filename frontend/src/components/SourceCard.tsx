@@ -8,6 +8,8 @@ interface Props {
   source: SourceItem;
   active?: boolean;
   onClick?: () => void;
+  /** 知识库上传文档预览入口；未提供时回退打开 Markdown。 */
+  onOpenUpload?: (uploadId: string) => void;
 }
 
 /** 来源卡片。
@@ -18,8 +20,11 @@ interface Props {
  *   - 不再渲染章节列表（与标题/摘要重复）；
  *   - hybrid（本地+网络同文档）卡提供「本地打开」与「网页原文」两个入口。
  */
-export default function SourceCard({ source, active, onClick }: Props) {
+export default function SourceCard({ source, active, onClick, onOpenUpload }: Props) {
   const [expanded, setExpanded] = useState(false);
+
+  const isUploadSource = source.source_type === "uploaded_doc";
+  const uploadId = source.upload_id ?? "";
 
   const openLocal = useCallback(() => {
     fetch(`/api/files/open?path=${encodeURIComponent(source.file_path)}`).catch(
@@ -33,15 +38,40 @@ export default function SourceCard({ source, active, onClick }: Props) {
     }
   }, [source.source_url]);
 
+  const openUpload = useCallback(() => {
+    if (!uploadId) return;
+    if (onOpenUpload) {
+      onOpenUpload(uploadId);
+      return;
+    }
+    window.open(
+      `/api/uploads/${encodeURIComponent(uploadId)}/markdown`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+  }, [onOpenUpload, uploadId]);
+
   const isHybrid = source.is_hybrid === true;
   const isWebSource = source.source_type === "tech_doc" && !!source.source_url;
 
   const handleCardClick = useCallback(() => {
     if (onClick) onClick(); // 保留父组件的 CitationPanel 激活逻辑
     if (isHybrid) return; // hybrid 卡用显式按钮，卡片整体点击不触发跳转
+    if (isUploadSource) {
+      openUpload();
+      return;
+    }
     if (isWebSource) openWeb();
     else openLocal();
-  }, [onClick, isHybrid, isWebSource, openWeb, openLocal]);
+  }, [
+    onClick,
+    isHybrid,
+    isUploadSource,
+    openUpload,
+    isWebSource,
+    openWeb,
+    openLocal,
+  ]);
 
   const indices = useMemo(
     () => (source.indices?.length ? source.indices : [source.index]),
@@ -56,11 +86,24 @@ export default function SourceCard({ source, active, onClick }: Props) {
   const hiddenCount = Math.max(excerpts.length - COLLAPSED_EXCERPTS, 0);
   const visibleExcerpts = expanded ? excerpts : excerpts.slice(0, COLLAPSED_EXCERPTS);
 
-  const displayTitle =
-    source.title?.trim() || source.file_path.split(/[\\/]/).pop() || "未命名来源";
+  // 上传文档优先展示原始文件名（含扩展名）；旧来源保持 title/路径文件名逻辑。
+  const displayTitle = isUploadSource
+    ? source.original_filename?.trim() ||
+      source.title?.trim() ||
+      source.file_path.split(/[\\/]/).pop() ||
+      "未命名来源"
+    : source.title?.trim() || source.file_path.split(/[\\/]/).pop() || "未命名来源";
   // V1.3：只显示文件名，不暴露完整路径
-  const basename = source.file_path.split(/[\\/]/).pop() || source.file_path;
-  const sourceKindLabel = source.source_type === "tech_doc" ? "网页文档" : "本地笔记";
+  const basename = isUploadSource
+    ? source.original_filename?.trim() ||
+      source.file_path.split(/[\\/]/).pop() ||
+      source.file_path
+    : source.file_path.split(/[\\/]/).pop() || source.file_path;
+  const sourceKindLabel = isUploadSource
+    ? "上传文档"
+    : source.source_type === "tech_doc"
+      ? "网页文档"
+      : "本地笔记";
 
   // V1.4：联网来源徽章与抓取时间（旧数据按类型推导）
   const origin = source.origin ?? (isHybrid ? "hybrid" : isWebSource ? "web_search" : "local");
@@ -79,7 +122,15 @@ export default function SourceCard({ source, active, onClick }: Props) {
           handleCardClick();
         }
       }}
-      title={isHybrid ? "本地笔记 + 网络文章" : isWebSource ? "点击跳转原始网页" : "点击在本地打开"}
+      title={
+        isUploadSource
+          ? "点击预览解析结果"
+          : isHybrid
+            ? "本地笔记 + 网络文章"
+            : isWebSource
+              ? "点击跳转原始网页"
+              : "点击在本地打开"
+      }
     >
       <div className="source-card-header">
         <span className="source-index">[{source.index}]</span>
@@ -125,7 +176,11 @@ export default function SourceCard({ source, active, onClick }: Props) {
           </>
         ) : (
           <span className="source-link-hint">
-            {isWebSource ? "↗ 点击跳转原始网页" : "📄 点击在本地打开"}
+            {isUploadSource
+              ? "📄 点击预览解析结果"
+              : isWebSource
+                ? "↗ 点击跳转原始网页"
+                : "📄 点击在本地打开"}
           </span>
         )}
       </div>

@@ -1,15 +1,59 @@
 import { createSSEParser, type ParsedSSE } from "./sse";
 import type { ModelOption, ProviderStatusReport } from "../types/chat";
+import type {
+  EngineInfo,
+  UploadActionResponse,
+  UploadCreateResponse,
+  UploadFile,
+  UploadListQuery,
+  UploadListResponse,
+  UploadOptions,
+  UploadTask,
+} from "../types/upload";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
+
+/** 把 FastAPI 的 {"detail": "..."} 错误转换为可展示文本。 */
+export function parseApiError(text: string, status?: number): string {
+  if (text) {
+    try {
+      const payload = JSON.parse(text) as {
+        detail?: unknown;
+        files?: Array<{ filename?: string; status?: string; error?: string }>;
+      };
+      if (typeof payload.detail === "string") {
+        const rejected = (payload.files ?? [])
+          .map((item) => item.error || `${item.filename ?? ""} ${item.status ?? ""}`.trim())
+          .filter(Boolean);
+        return rejected.length > 0
+          ? `${payload.detail}\n${rejected.join("\n")}`
+          : payload.detail;
+      }
+      if (payload.detail && typeof payload.detail === "object") {
+        return JSON.stringify(payload.detail);
+      }
+    } catch {
+      // 非 JSON 错误体按原文展示
+    }
+    return text;
+  }
+  return status ? `请求失败：${status}` : "请求失败";
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(`${API_BASE}${path}`, init);
   if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(text || `请求失败：${resp.status}`);
+    throw new Error(parseApiError(await resp.text(), resp.status));
   }
   return resp.json() as Promise<T>;
+}
+
+async function requestText(path: string, init?: RequestInit): Promise<string> {
+  const resp = await fetch(`${API_BASE}${path}`, init);
+  if (!resp.ok) {
+    throw new Error(parseApiError(await resp.text(), resp.status));
+  }
+  return resp.text();
 }
 
 export function getModels(refresh = false): Promise<ModelOption[]> {
@@ -42,6 +86,113 @@ export function ingestDirectory(payload: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source_type: "personal_note", ...payload }),
+  });
+}
+
+// ---- 知识库上传（PRD 7.9）----
+export function getUploads(query: UploadListQuery = {}): Promise<UploadListResponse> {
+  const params = new URLSearchParams();
+  if (query.status) params.set("status", query.status);
+  if (query.format) params.set("format", query.format);
+  if (query.q) params.set("q", query.q);
+  if (query.limit != null) params.set("limit", String(query.limit));
+  if (query.offset != null) params.set("offset", String(query.offset));
+  const suffix = params.toString();
+  return request<UploadListResponse>(`/uploads${suffix ? `?${suffix}` : ""}`);
+}
+
+export function getUploadEngines(): Promise<{ engines: EngineInfo[] }> {
+  return request<{ engines: EngineInfo[] }>("/uploads/engines");
+}
+
+export function getUpload(uploadId: string): Promise<UploadFile> {
+  return request<UploadFile>(`/uploads/${encodeURIComponent(uploadId)}`);
+}
+
+export function getUploadTask(taskId: string): Promise<UploadTask> {
+  return request<UploadTask>(`/uploads/tasks/${encodeURIComponent(taskId)}`);
+}
+
+export function getUploadMarkdown(uploadId: string, signal?: AbortSignal): Promise<string> {
+  return requestText(`/uploads/${encodeURIComponent(uploadId)}/markdown`, { signal });
+}
+
+export function reparseUpload(uploadId: string): Promise<UploadActionResponse> {
+  return request<UploadActionResponse>(`/uploads/${encodeURIComponent(uploadId)}/reparse`, {
+    method: "POST",
+  });
+}
+
+export function reindexUpload(uploadId: string): Promise<UploadActionResponse> {
+  return request<UploadActionResponse>(`/uploads/${encodeURIComponent(uploadId)}/reindex`, {
+    method: "POST",
+  });
+}
+
+export function deleteUpload(uploadId: string): Promise<{ ok: boolean; upload_id: string }> {
+  return request(`/uploads/${encodeURIComponent(uploadId)}`, { method: "DELETE" });
+}
+
+export interface UploadRequestHandlers {
+  onProgress?: (percent: number) => void;
+  signal?: AbortSignal;
+}
+
+/** XHR 上传以获取真实上传进度；fetch 不支持上传进度事件。 */
+export function uploadFiles(
+  files: File[],
+  options: UploadOptions,
+  handlers: UploadRequestHandlers = {},
+): Promise<UploadCreateResponse> {
+  return new Promise((resolve, reject) => {
+    if (handlers.signal?.aborted) {
+      reject(new DOMException("上传已取消", "AbortError"));
+      return;
+    }
+    const form = new FormData();
+    for (const file of files) form.append("files", file, file.name);
+    form.append("engine", options.engine || "auto");
+    form.append("auto_index", String(options.auto_index));
+    form.append("chunk_size", String(options.chunk_size));
+    form.append("chunk_overlap", String(options.chunk_overlap));
+    if (options.tags) form.append("tags", options.tags);
+    if (options.force) form.append("force", "true");
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE}/uploads`);
+    const onAbort = () => xhr.abort();
+    handlers.signal?.addEventListener("abort", onAbort, { once: true });
+
+    const cleanup = () => {
+      handlers.signal?.removeEventListener("abort", onAbort);
+    };
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        handlers.onProgress?.(Math.round((event.loaded / event.total) * 100));
+      }
+    };
+    xhr.onerror = () => {
+      cleanup();
+      reject(new Error("上传失败：网络错误"));
+    };
+    xhr.onabort = () => {
+      cleanup();
+      reject(new DOMException("上传已取消", "AbortError"));
+    };
+    xhr.onload = () => {
+      cleanup();
+      const text = xhr.responseText || "";
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(parseApiError(text, xhr.status)));
+        return;
+      }
+      try {
+        resolve(JSON.parse(text) as UploadCreateResponse);
+      } catch {
+        reject(new Error("上传响应格式错误"));
+      }
+    };
+    xhr.send(form);
   });
 }
 

@@ -24,7 +24,7 @@ def _is_inside_fence(lines: list[str], idx: int) -> bool:
     return fence_count % 2 == 1
 
 
-def _split_sections(text: str) -> list[dict]:
+def split_sections(text: str) -> list[dict]:
     """按标题拆分，返回 [{level, title, heading_path, content}]。
 
     heading_path 形如 "RAG > 检索策略 > 混合检索"（含自身标题）。
@@ -57,6 +57,10 @@ def _split_sections(text: str) -> list[dict]:
 
     flush(stack[-1][1] if stack else "")
     return sections
+
+
+# 兼容旧代码/测试对私有函数的引用；行为与公开函数完全一致。
+_split_sections = split_sections
 
 
 def chunk_markdown(

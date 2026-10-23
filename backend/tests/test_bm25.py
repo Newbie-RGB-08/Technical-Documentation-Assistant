@@ -32,6 +32,32 @@ def test_bm25_build_and_search(stores):
     assert hits2 and "PersistentClient" in hits2[0]["text"]
 
 
+def test_bm25_loads_uploaded_doc_collection(stores):
+    """P1：BM25 必须遍历 uploaded_docs，而不是只硬编码两种旧类型。"""
+    vector_store, _ = stores
+    path = "bm25/uploaded-only.md"
+    try:
+        vector_store.add_chunks(
+            [
+                {
+                    "text": "上传文档专用关键词：盘古文档、扫描件与表格解析。",
+                    "metadata": {
+                        "file_path": path,
+                        "global_index": 0,
+                        "content_hash": "f" * 64,
+                    },
+                }
+            ],
+            source_type="uploaded_doc",
+        )
+        index = BM25Index()
+        assert index.load_from_chroma(vector_store) > 0
+        hits = index.search("盘古文档 扫描件", top_k=5)
+        assert hits and any("盘古文档" in h["text"] for h in hits)
+    finally:
+        vector_store.delete_by_metadata("uploaded_doc", {"file_path": path})
+
+
 def test_bm25_incremental_add():
     index = BM25Index()
     index.add_documents(

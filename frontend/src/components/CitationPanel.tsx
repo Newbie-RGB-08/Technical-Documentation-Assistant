@@ -9,6 +9,8 @@ interface Props {
   onSelect: (index: number) => void;
   /** V1.4：当前回答状态透传到来源面板 */
   answerStatus?: string | null;
+  /** 上传文档预览入口；旧调用不传时由 SourceCard 回退。 */
+  onOpenUpload?: (uploadId: string) => void;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -28,6 +30,7 @@ export default function CitationPanel({
   onClose,
   onSelect,
   answerStatus,
+  onOpenUpload,
 }: Props) {
   // V1.2：计数改为双口径（篇文档 / 个片段），并且引用高亮按片段序号集合判定
   const chunkTotal = sources.reduce(
@@ -66,6 +69,7 @@ export default function CitationPanel({
             source={source}
             active={isActive(source)}
             onClick={() => onSelect(source.index)}
+            onOpenUpload={onOpenUpload}
           />
         ))}
       </div>

@@ -1,0 +1,69 @@
+# P7：可选解析引擎容器编排（MinerU / PaddleX）
+#
+# 四档部署参考 README.md：
+#   1. 仅 native            —— 不启动任何 service
+#   2. +RapidOCR            —— 本地进程，无需容器
+#   3. +MinerU              —— 本 Compose 启动 mineru
+#   4. +PaddleX             —— 本 Compose 启动 paddlex
+#
+# 启动：  docker compose -f deploy/parsers/docker-compose.yml up -d        # CPU 全开
+#         或
+#          docker compose -f deploy/parsers/docker-compose.yml --profile mineru up -d
+#          docker compose -f deploy/parsers/docker-compose.yml --profile paddlex up -d
+# GPU：   docker compose -f deploy/parsers/docker-compose.yml -f deploy/parsers/docker-compose.gpu.yml up -d
+#
+# 安全约定：
+#   - 端口只绑定 127.0.0.1（不对外暴露）。
+#   - 不放置任何云 API Key。
+#   - 不挂载用户上传目录（引擎各自读写独立模型缓存卷）。
+services:
+  mineru:
+    image: "${MINERU_IMAGE_DIGEST:-mineruai/mineru_3-1_1-services-api:3.2.1}"
+    profiles: ["mineru"]
+    container_name: ptda-mineru
+    restart: "unless-stopped"
+    ports:
+      - "127.0.0.1:${MINERU_PORT:-30001}:30001"
+    volumes:
+      - mineru_model_cache:/root/.cache/mineru
+    environment:
+      - MINERU_WEBSOCKET_PORT=30002
+      - MINERU_PORT=30001
+      - MINERU_BACKEND=hybrid-auto-engine
+      - MINERU_LANGUAGE=ch
+      - MINERU_FORMULA=True
+      - MINERU_TABLE=True
+      - MINERU_IMAGE_ANALYSIS=True
+      - MINERU_USE_CUDA=False
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:30001/openapi.json"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+
+  paddlex:
+    image: "${PADDLEX_IMAGE_DIGEST:-paddlepaddle/paddlex:3.0.0-slim}"
+    profiles: ["paddlex"]
+    container_name: ptda-paddlex
+    restart: "unless-stopped"
+    ports:
+      - "127.0.0.1:${PADDLEX_PORT:-8080}:8080"
+    volumes:
+      - paddlex_model_cache:/root/.paddlex
+    environment:
+      - PADDLEX_SERVING_MODE=serving
+      - PADDLEX_LANGUAGE=ch
+      - PADDLEX_DEVICE=cpu
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  mineru_model_cache:
+    name: "${MINERU_MODEL_VOLUME:-ptda-mineru-models}"
+  paddlex_model_cache:
+    name: "${PADDLEX_MODEL_VOLUME:-ptda-paddlex-models}"

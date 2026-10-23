@@ -1,0 +1,3 @@
+-r requirements.txt
+# 仅测试用：现场生成旧版 .xls 样本，运行时不依赖。
+xlwt>=1.3

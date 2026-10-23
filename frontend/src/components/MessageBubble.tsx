@@ -22,6 +22,8 @@ interface Props {
   onRetry?: () => void;
   /** V1.4 优化：内联来源的“查看全部”入口 */
   onOpenSources?: () => void;
+  /** 上传文档来源预览入口；旧调用不传时由 SourceCard 回退。 */
+  onOpenUpload?: (uploadId: string) => void;
 }
 
 /** 无证据类回答：没有任何来源时给出明确提示。 */
@@ -44,7 +46,13 @@ const STATUS_BADGES: Record<string, { label: string; tone: string }> = {
   interrupted: { label: "已中断", tone: "muted" },
 };
 
-export default function MessageBubble({ message, onCitationClick, onRetry, onOpenSources }: Props) {
+export default function MessageBubble({
+  message,
+  onCitationClick,
+  onRetry,
+  onOpenSources,
+  onOpenUpload,
+}: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const html = useMemo(() => renderMarkdown(message.content || ""), [message.content]);
   const sources: SourceItem[] = message.role === "assistant" ? message.sources ?? [] : [];
@@ -113,6 +121,7 @@ export default function MessageBubble({ message, onCitationClick, onRetry, onOpe
                 <SourceCard
                   key={`${source.source_type ?? ""}|${source.file_path}|${source.index}`}
                   source={source}
+                  onOpenUpload={onOpenUpload}
                 />
               ))}
             </div>

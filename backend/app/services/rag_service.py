@@ -167,7 +167,7 @@ def _build_card(members: list[tuple[int, dict]], max_excerpts: int) -> dict:
     if not trust_level:
         trust_level = "web_medium" if origin == "web_search" else "local_high"
 
-    return {
+    card = {
         "index": first_idx,
         "indices": [idx for idx, _ in members],
         "chunk_count": len(members),
@@ -184,6 +184,21 @@ def _build_card(members: list[tuple[int, dict]], max_excerpts: int) -> dict:
         "excerpts": excerpts,
         "score": score,
     }
+    # 上传字段只在上传来源卡出现，旧来源卡的键集合保持不变（兼容旧前端/测试）。
+    if (
+        card["source_type"] == "uploaded_doc"
+        or first_meta.get("upload_id")
+        or first_meta.get("doc_format")
+        or first_meta.get("original_filename")
+    ):
+        card.update(
+            {
+                "upload_id": first_meta.get("upload_id") or None,
+                "doc_format": first_meta.get("doc_format") or None,
+                "original_filename": first_meta.get("original_filename") or None,
+            }
+        )
+    return card
 
 
 def merge_chunks_to_sources(chunks: list[dict], max_excerpts: int = MAX_EXCERPTS) -> list[dict]:

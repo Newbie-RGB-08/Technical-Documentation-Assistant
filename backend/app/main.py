@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import chat, documents, files, health
+from app.observability import count_api_routes, summarize_route_prefixes
+from app.routers import chat, documents, files, health, uploads
 from app.services.llm_gateway import LLMGateway
 from app.state import AppState
 
@@ -18,9 +20,30 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    app.state.started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     app.state.core = AppState.build()
+    _log_registered_routes(app)
+    pipeline = getattr(app.state.core, "upload_pipeline", None)
+    if pipeline is not None:
+        try:
+            pipeline.recover()
+        except Exception as exc:  # noqa: BLE001 - 恢复失败不阻断聊天/旧入库
+            logger.warning("上传任务启动恢复失败: %s", exc)
     await _startup_model_probe(app.state.core.gateway)
-    yield
+    try:
+        yield
+    finally:
+        if pipeline is not None:
+            pipeline.shutdown(wait=False)
+
+
+def _log_registered_routes(app: FastAPI) -> None:
+    """启动日志：打印已注册的 API 前缀，便于确认进程加载的是最新代码。"""
+    logger.info(
+        "已注册 API 路由（%d 条）：%s",
+        count_api_routes(app),
+        ", ".join(summarize_route_prefixes(app)),
+    )
 
 
 async def _startup_model_probe(gateway: LLMGateway) -> None:
@@ -96,3 +119,4 @@ app.include_router(chat.router)
 app.include_router(documents.router)
 app.include_router(health.router)
 app.include_router(files.router)
+app.include_router(uploads.router)

@@ -27,6 +27,26 @@ class Settings(BaseSettings):
     models_config_path: Path = BACKEND_DIR / "config" / "models.yaml"
     sqlite_path: Path = BACKEND_DIR / "data" / "sessions.db"
 
+    # ---- 知识库上传（TDA-26-10-2 / 7.12）----
+    upload_enabled: bool = True
+    upload_dir: Path = BACKEND_DIR / "data" / "uploads"
+    upload_max_mb: int = 100
+    upload_max_files_per_batch: int = 20
+    upload_max_pages: int = 500
+    upload_max_images: int = 300
+    upload_max_chunks: int = 5000
+    upload_max_markdown_chars: int = 5_000_000
+    upload_concurrency: int = 1
+    upload_parse_timeout_seconds: float = 600.0
+    upload_pdf_text_min_chars: int = 80
+    upload_image_ocr: bool = False
+    upload_engine_health_ttl_seconds: float = 30.0
+    rapidocr_model_dir: Path = BACKEND_DIR / "data" / "models" / "rapidocr"
+    mineru_api_uri: str = "http://127.0.0.1:30001"
+    mineru_timeout_seconds: float = 600.0
+    paddlex_uri: str = "http://127.0.0.1:8080"
+    paddlex_timeout_seconds: float = 300.0
+
     # MySQL（元数据）
     mysql_host: str = "localhost"
     mysql_port: int = 3306

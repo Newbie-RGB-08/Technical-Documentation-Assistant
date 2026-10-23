@@ -26,10 +26,14 @@ export interface SourceItem {
   excerpts?: string[];     // 多片段摘要（后端最多 3 条）
   is_hybrid?: boolean;     // V1.3 新增：本地笔记与网络文章同文档合并标记
   // V1.4 新增：来源类型、抓取时间与可信级别
-  origin?: "local" | "web_search" | "hybrid";
+  origin?: "local" | "web_search" | "hybrid" | "upload";
   retrieved_at?: string;   // 网页抓取时间（本地来源为空）
   trust_level?: string;    // local_high | web_medium
   used?: boolean;          // V1.4 优化：本次回答是否实际引用了该来源
+  // V1.6 知识库上传来源（仅 uploaded_doc 卡片出现）
+  upload_id?: string;
+  doc_format?: string;
+  original_filename?: string;
 }
 
 export interface ChatMessage {

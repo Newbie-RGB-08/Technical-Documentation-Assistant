@@ -28,13 +28,45 @@ def sanitize_metadata(meta: dict) -> dict:
     return clean
 
 
+_RESERVED_METADATA = {
+    "file_path",
+    "source_type",
+    "title",
+    "content_hash",
+    "global_index",
+    "chunk_index",
+    "heading_path",
+    "total_chunks",
+    "content_type",
+    "table_index",
+    "image_index",
+    "asset_name",
+    "row_count",
+    "col_count",
+}
+_UPLOAD_META_KEYS = (
+    "upload_id",
+    "doc_format",
+    "original_filename",
+    "parse_engine",
+    "page_count",
+)
+
+
 def prepare_chunks(
     file_record: dict,
     chunk_size: int = 512,
     chunk_overlap: int = 64,
     content_hash: str | None = None,
+    chunker=None,
+    extra_metadata: dict | None = None,
 ) -> list[dict]:
-    """对单个文件记录分块，并补齐 global_index、content_hash、清洗元数据。"""
+    """对单个文件记录分块，并补齐 global_index、content_hash、清洗元数据。
+
+    ``chunker`` 为空时保持旧 ``chunk_markdown`` 行为；传入自定义分块器时需兼容
+    ``chunker(text, file_meta, chunk_size=..., chunk_overlap=...)``。
+    ``extra_metadata`` 只补充 file_record 未提供的键，保留键禁止覆盖。
+    """
     file_meta = {
         "file_path": file_record["file_path"],
         "source_type": file_record["source_type"],
@@ -51,11 +83,34 @@ def prepare_chunks(
         "provider": file_record.get("provider") or "",
         "content_hash": content_hash or compute_content_hash(file_record["content"]),
     }
-    chunks = chunk_markdown(
-        file_record["content"], file_meta, chunk_size=chunk_size, chunk_overlap=chunk_overlap
-    )
+    for key in _UPLOAD_META_KEYS:
+        if key in file_record and file_record[key] is not None:
+            file_meta[key] = file_record[key]
+    for key, value in (extra_metadata or {}).items():
+        if key in _RESERVED_METADATA or key in file_record:
+            continue
+        if key not in file_meta:
+            file_meta[key] = value
+
+    if chunker is None:
+        chunks = chunk_markdown(
+            file_record["content"],
+            file_meta,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+    else:
+        chunks = chunker(
+            file_record["content"],
+            file_meta,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
     for i, chunk in enumerate(chunks):
         chunk["metadata"]["global_index"] = i
+        # 内部字段只供分块器使用，不进入 Chroma/MySQL。
+        for key in [k for k in chunk["metadata"] if str(k).startswith("_")]:
+            chunk["metadata"].pop(key, None)
         chunk["metadata"] = sanitize_metadata(chunk["metadata"])
     return chunks
 
@@ -68,6 +123,8 @@ def ingest_files(
     chunk_size: int = 512,
     chunk_overlap: int = 64,
     on_file_ingested=None,
+    chunker=None,
+    extra_metadata: dict | None = None,
 ) -> dict:
     """入库一批文件，返回 {ingested, skipped, failed, total_chunks, errors}。
 
@@ -96,7 +153,14 @@ def ingest_files(
                 )
                 metadata_store.delete_document(file_path)
 
-            chunks = prepare_chunks(record, chunk_size, chunk_overlap, content_hash=content_hash)
+            chunks = prepare_chunks(
+                record,
+                chunk_size,
+                chunk_overlap,
+                content_hash=content_hash,
+                chunker=chunker,
+                extra_metadata=extra_metadata,
+            )
             vector_ids = vector_store.add_chunks(chunks, record["source_type"])
 
             doc_id = metadata_store.upsert_document(

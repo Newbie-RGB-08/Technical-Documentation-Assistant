@@ -28,7 +28,8 @@ class BM25Index:
         total = 0
         with self._lock:
             self._corpus_ids, self._corpus_texts, self._corpus_metas = [], [], []
-            for source_type in ("tech_doc", "personal_note"):
+            # 统一遍历来源类型：新增 uploaded_doc 等类型时无需再改 BM25。
+            for source_type in store.source_types():
                 collection = store._collection(source_type)
                 data = collection.get(include=["documents", "metadatas"])
                 docs = data.get("documents") or []

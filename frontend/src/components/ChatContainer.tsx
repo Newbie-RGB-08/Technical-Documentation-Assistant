@@ -6,6 +6,7 @@ import CitationPanel from "./CitationPanel";
 import ConfirmDialog from "./ConfirmDialog";
 import MessageBubble from "./MessageBubble";
 import ModelSelector from "./ModelSelector";
+import UploadPreviewDialog from "./UploadPreviewDialog";
 
 /** V1.4：检索阶段文案 */
 const STAGE_LABELS: Record<string, string> = {
@@ -22,6 +23,7 @@ const STAGE_LABELS: Record<string, string> = {
 
 export default function ChatContainer() {
   const [modelId, setModelId] = useState<string | null>(null);
+  const [previewUploadId, setPreviewUploadId] = useState<string | null>(null);
   const chat = useChatStream(modelId);
   const provider = useProviderStatus(modelId, setModelId);
   const listRef = useRef<HTMLDivElement>(null);
@@ -68,6 +70,9 @@ export default function ChatContainer() {
               {chat.meta.provider} / {chat.meta.model}
             </span>
           )}
+          <a className="ghost-button header-link" href="#/knowledge">
+            知识库
+          </a>
           <ModelSelector value={modelId} onChange={setModelId} models={provider.models} loaded={provider.loaded} />
           <button
             type="button"
@@ -111,6 +116,7 @@ export default function ChatContainer() {
                 onCitationClick={chat.openCitation}
                 onRetry={message.role === "assistant" ? chat.retry : undefined}
                 onOpenSources={() => chat.setPanelOpen(true)}
+                onOpenUpload={setPreviewUploadId}
               />
             ))
           )}
@@ -128,6 +134,12 @@ export default function ChatContainer() {
         onClose={() => chat.setPanelOpen(false)}
         onSelect={chat.setActiveSource}
         answerStatus={lastAssistant?.answer_status ?? null}
+        onOpenUpload={setPreviewUploadId}
+      />
+
+      <UploadPreviewDialog
+        uploadId={previewUploadId}
+        onClose={() => setPreviewUploadId(null)}
       />
 
       {chat.confirmPayload && (

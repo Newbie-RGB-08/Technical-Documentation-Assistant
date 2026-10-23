@@ -37,7 +37,10 @@ desktop.ini
 *.log
 backend/scripts/_tmp_*.py
 backend/jieba.cache
-backend/pytest-of-Administrator/
+backend/pytest-of-*/
+backend/tmp*
+backend/.tmp*
+tmp*
 .tmp-ci/
 .hf-cache/
 
@@ -46,3 +49,12 @@ pip-*/
 
 # 运行时缓存
 backend/data/web_cache.db
+backend/data/models/
+
+# 测试临时文件
+backend/*.sqlite3
+backend/openpyxl.*
+
+# torch 运行期编译缓存
+torchinductor_*/
+backend/torchinductor_*/

@@ -254,9 +254,52 @@ curl -N -X POST http://localhost:8000/api/chat/stream \
 
 | 套件 | 数量 | 命令 | 覆盖重点 |
 | --- | --- | --- | --- |
-| 后端 pytest | 120 | `cd backend && pytest` | 分块边界、五维评分、定级边界、RRF 手算、降级路径、来源卡片合并（17 条）、files 白名单、SSE 事件序列 |
-| 前端 vitest | 52 | `cd frontend && npm run test` | SSE 分帧、confirm 状态机、引用联动、SourceCard 21 条渲染/跳转分支 |
+| 后端 pytest | 435 | `cd backend && pytest` | 分块边界、五维评分、定级边界、RRF 手算、降级路径、来源卡片合并、files 白名单、SSE、上传流水线、解析引擎（native/RapidOCR/MinerU/PaddleX）、安全用例 |
+| 前端 vitest | 98 | `cd frontend && npm run test` | SSE 分帧、confirm 状态机、引用联动、SourceCard 渲染/跳转分支、模型选择/Provider 状态 |
 | 类型/构建 | — | `npm run typecheck` / `npm run build` | `tsc --noEmit` 与 `vite build` 零错误 |
+
+---
+
+## 知识库上传（可选扩展）
+
+支持把本地文档（PDF / DOCX / PPTX / XLSX / XLS / CSV / Markdown / TXT / HTML / 图片）上传并入库检索。四档解析引擎可叠加：
+
+| 档位 | 引擎 | 说明 |
+| --- | --- | --- |
+| 1 | native | 内置文本/表格解析，默认，无需外部服务 |
+| 2 | RapidOCR | 本地 ONNX OCR（安装 `backend/requirements-ocr.txt`） |
+| 3 | MinerU | 扫描 PDF 质量最好，Docker 编排见 `deploy/parsers/` |
+| 4 | PaddleX | 中文版面/表格强，Docker 编排见 `deploy/parsers/` |
+
+`auto` 引擎会按文本层自动路由（数字 PDF 走 native、扫描件走 OCR），引擎不可达时逐级降级、不阻断上传。
+
+### 常用 API
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/uploads/engines` | 各引擎能力/健康/延迟（30s 缓存，不可达返回 `available=false`） |
+| POST | `/api/uploads` | 多文件上传（multipart，`engine=auto` 等表单参数） |
+| GET | `/api/uploads` | 上传列表（含状态/错误/进度） |
+| GET | `/api/uploads/{id}/markdown` | 解析后的 Markdown（预览） |
+| POST | `/api/uploads/{id}/reparse` | 重新解析（清空解析结果保留原文件） |
+| POST | `/api/uploads/{id}/reindex` | 重建索引（强制 `force_reingest`） |
+| DELETE | `/api/uploads/{id}` | 删除（向量→元数据→资源→目录，含刷新） |
+
+状态机：`queued → parsing → parsed → indexing → indexed`；失败态 `failed_parse` / `failed_index` 可重试；重启后中间态收敛。
+
+### 限额与安全
+
+- 单文件 100MB、单批 20 个、PDF 500 页、图片 300 张、chunk 5000、Markdown 500 万字符；
+- 超限：Markdown→`failed_parse`、chunk→`failed_index`（不写库）、页数→解析前拒绝、图片→保留前 N + 占位 + warning；
+- 路径穿越 / ZIP 炸弹 / 宏格式（.docm/.xlsm/.pptm）/ 超大文件均被拒绝且清理半成品；
+- 预览经前端 DOMPurify 消毒；`auto` 不选云引擎，隐私不落地到第三方。
+
+### 清理上传数据
+
+```powershell
+# 通过 API 删除单个上传
+curl -X DELETE "http://127.0.0.1:8000/api/uploads/{upload_id}"
+```
 
 ---
 

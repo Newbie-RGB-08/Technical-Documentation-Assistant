@@ -14,7 +14,10 @@ from app.core.retriever import HybridRetriever
 from app.providers.local_reranker import LocalBGEReranker
 from app.services.llm_gateway import LLMGateway
 from app.services.metadata_store import MySQLMetadataStore
+from app.services.asset_store import UploadAssetStore
 from app.services.session_store import SessionStore
+from app.services.upload_pipeline import UploadPipeline
+from app.services.upload_store import UploadStore
 from app.services.vector_store import ChromaStore
 from app.services.web_cache_store import WebCacheStore
 from app.services.web_fetcher import fetch_pages
@@ -41,6 +44,9 @@ class AppState:
     web_cache: WebCacheStore | None = None
     web_writeback: WebWriteback | None = None
     writeback_queue: WebWritebackQueue | None = None
+    upload_store: UploadStore | None = None
+    asset_store: UploadAssetStore | None = None
+    upload_pipeline: UploadPipeline | None = None
 
     @classmethod
     def build(cls) -> "AppState":
@@ -87,16 +93,9 @@ class AppState:
         holder: dict = {}
 
         def _on_ingested(payload: dict) -> None:
-            try:
-                bm25.load_from_chroma(chroma)
-            except Exception as exc:  # noqa: BLE001 - 刷新失败不影响回答
-                logger.warning("写回后 BM25 刷新失败: %s", exc)
             current = holder.get("state")
             if current is not None:
-                try:
-                    current.retrieval_scorer = build_retrieval_scorer(metadata)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("写回后检索评分器刷新失败: %s", exc)
+                refresh_after_ingest(current)
             logger.info("网页写回完成: %s", payload.get("file_path"))
 
         web_writeback = WebWriteback(
@@ -107,6 +106,8 @@ class AppState:
         if web_gateway is not None:
             writeback_queue = WebWritebackQueue(web_writeback, auto_start=True)
 
+        upload_store = UploadStore(metadata.engine)
+        asset_store = UploadAssetStore()
         state = cls(
             chroma=chroma,
             metadata=metadata,
@@ -122,9 +123,32 @@ class AppState:
             web_cache=web_cache,
             web_writeback=web_writeback,
             writeback_queue=writeback_queue,
+            upload_store=upload_store,
+            asset_store=asset_store,
+        )
+        state.upload_pipeline = UploadPipeline(
+            state,
+            upload_store,
+            asset_store,
+            refresh_callback=refresh_after_ingest,
         )
         holder["state"] = state
         return state
+
+
+def refresh_after_ingest(state: AppState) -> None:
+    """入库/上传/删除后的统一刷新：BM25 语料 + 检索评分器关键字权重。
+
+    单次刷新失败只记录日志，不影响已经完成的入库或正在进行的问答。
+    """
+    try:
+        state.bm25.load_from_chroma(state.chroma)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("入库后 BM25 刷新失败: %s", exc)
+    try:
+        state.retrieval_scorer = build_retrieval_scorer(state.metadata)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("入库后检索评分器刷新失败: %s", exc)
 
 
 def build_retrieval_scorer(metadata: MySQLMetadataStore) -> RetrievalScorer:

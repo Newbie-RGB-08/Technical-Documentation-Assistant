@@ -1,10 +1,11 @@
 """ChromaDB 向量存储实现（PRD 3.2.2 / 3.2.5）。
 
-多集合隔离：tech_docs / personal_notes 按来源拆分；
+多集合隔离：tech_docs / personal_notes / uploaded_docs 按来源拆分；
 批量入库（100/批）；upsert 语义支持增量重入。
 """
 from __future__ import annotations
 
+import platform
 import threading
 
 import chromadb
@@ -13,7 +14,46 @@ from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunct
 from app.config import get_settings
 from app.services.base_stores import VectorStore
 
-_COLLECTIONS = {"tech_doc": "tech_docs", "personal_note": "personal_notes"}
+
+def _patch_chromadb_windows_sqlite_path() -> None:
+    """兼容 ChromaDB 1.5.9 在 Windows 上的持久化路径缺陷。
+
+    该版本的 Rust 绑定同时收到 ``persist_path`` 与 ``sqlite_db_config.url``
+    时，会错误地把完整 sqlite 文件路径交给 SQLite，导致
+    ``unable to open database file``。Rust 绑定在 ``url=None`` 时会使用
+    ``persist_path`` 自动拼接数据库文件，因此这里只忽略 url，不改其他配置。
+    非 Windows 或未安装 Rust 绑定时保持原样。
+    """
+    if platform.system() != "Windows":
+        return
+    try:
+        import chromadb_rust_bindings as rust_bindings
+    except ImportError:
+        return
+    if getattr(rust_bindings.SqliteDBConfig, "_ptdra_url_compat", False):
+        return
+
+    original = rust_bindings.SqliteDBConfig
+
+    def compat_sqlite_config(*args, **kwargs):
+        # Chroma 以关键字参数传 url；位置参数形式也兼容。
+        if len(args) >= 3:
+            args = args[:2] + (None,) + args[3:]
+        else:
+            kwargs["url"] = None
+        return original(*args, **kwargs)
+
+    compat_sqlite_config._ptdra_url_compat = True  # type: ignore[attr-defined]
+    rust_bindings.SqliteDBConfig = compat_sqlite_config  # type: ignore[assignment]
+
+
+_patch_chromadb_windows_sqlite_path()
+
+_COLLECTIONS = {
+    "tech_doc": "tech_docs",
+    "personal_note": "personal_notes",
+    "uploaded_doc": "uploaded_docs",
+}
 _BATCH_SIZE = 100
 
 
@@ -53,6 +93,11 @@ class ChromaStore(VectorStore):
         )
 
     @staticmethod
+    def source_types() -> tuple[str, ...]:
+        """全部可用来源类型；BM25/健康检查等遍历入口统一使用。"""
+        return tuple(_COLLECTIONS)
+
+    @staticmethod
     def make_id(file_path: str, chunk_index: int, content_hash: str | None = None) -> str:
         """文件内 chunk 的稳定 ID；带 content_hash 时，内容变更会产生新向量 ID。"""
         base = f"{file_path}#{chunk_index}"
@@ -90,7 +135,7 @@ class ChromaStore(VectorStore):
         where: dict | None = None,
     ) -> list[dict]:
         results: list[dict] = []
-        targets = [source_type] if source_type else list(_COLLECTIONS.keys())
+        targets = [source_type] if source_type else list(self.source_types())
         with self._lock:
             for st in targets:
                 col = self._collection(st)
@@ -121,7 +166,7 @@ class ChromaStore(VectorStore):
         if not ids:
             return
         with self._lock:
-            for st, name in _COLLECTIONS.items():
+            for st in self.source_types():
                 self._collection(st).delete(ids=ids)
 
     def delete_by_metadata(self, source_type: str, where: dict) -> None:
@@ -138,7 +183,7 @@ class ChromaStore(VectorStore):
             return []
         results: list[dict] = []
         with self._lock:
-            for st in _COLLECTIONS:
+            for st in self.source_types():
                 col = self._collection(st)
                 if col.count() == 0:
                     continue

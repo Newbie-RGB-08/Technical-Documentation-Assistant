@@ -197,6 +197,121 @@ def test_ingest_calls_on_file_ingested_callback(stores, tmp_path):
     assert events[0]["document_id"] > 0
 
 
+def test_prepare_chunks_default_output_is_unchanged():
+    """P3 回归：不传 chunker 时必须与旧 chunk_markdown 输出逐字段一致。"""
+    from app.core.chunker import chunk_markdown
+    from app.services.ingest_pipeline import prepare_chunks, sanitize_metadata
+
+    record = {
+        "file_path": "notes/regression.md",
+        "source_type": "personal_note",
+        "title": "回归",
+        "tags": [],
+        "content": "# 回归\n\n正文内容。",
+    }
+    file_meta = {
+        "file_path": "notes/regression.md",
+        "source_type": "personal_note",
+        "title": "回归",
+        "tags": [],
+        "created_at": "",
+        "updated_at": "",
+        "source_url": "",
+        "canonical_url": "",
+        "origin": "",
+        "retrieved_at": "",
+        "expires_at": "",
+        "search_query": "",
+        "provider": "",
+        "content_hash": compute_content_hash(record["content"]),
+    }
+    expected = chunk_markdown(record["content"], file_meta)
+    for i, chunk in enumerate(expected):
+        chunk["metadata"]["global_index"] = i
+        chunk["metadata"] = sanitize_metadata(chunk["metadata"])
+    assert prepare_chunks(record) == expected
+
+
+def test_prepare_chunks_rich_chunker_and_extra_metadata():
+    from app.core.rich_chunker import chunk_uploaded_document
+    from app.services.ingest_pipeline import prepare_chunks
+
+    record = {
+        "file_path": "uploads/u_p3/parsed.md",
+        "source_type": "uploaded_doc",
+        "title": "上传表格",
+        "tags": [],
+        "content": "# 表格\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n",
+    }
+    chunks = prepare_chunks(
+        record,
+        chunk_size=1000,
+        chunk_overlap=0,
+        chunker=chunk_uploaded_document,
+        extra_metadata={
+            "upload_id": "u_p3",
+            "doc_format": "pdf",
+            "file_path": "should-not-override",
+            "source_type": "tech_doc",
+            "title": "should-not-override",
+            "global_index": 999,
+        },
+    )
+    assert chunks
+    table = [c for c in chunks if c["metadata"].get("content_type") == "table"]
+    assert table
+    meta = table[0]["metadata"]
+    assert meta["upload_id"] == "u_p3"
+    assert meta["doc_format"] == "pdf"
+    assert meta["file_path"] == record["file_path"]
+    assert meta["source_type"] == "uploaded_doc"
+    assert meta["title"] == "上传表格"
+    assert all(c["metadata"]["global_index"] == i for i, c in enumerate(chunks))
+    assert meta["global_index"] != 999
+
+
+def test_ingest_files_accepts_rich_chunker_and_upload_metadata(stores, tmp_path):
+    from app.core.rich_chunker import chunk_uploaded_document
+    from app.services.ingest_pipeline import ingest_files
+
+    vector_store, metadata_store = stores
+    p = tmp_path / "uploaded_table.md"
+    p.write_text(
+        "# 上传文档\n\n| 名称 | 数量 |\n| --- | --- |\n| 苹果 | 3 |\n",
+        encoding="utf-8",
+    )
+    record = {
+        "file_path": str(p).replace("\\", "/"),
+        "source_type": "uploaded_doc",
+        "title": "上传文档",
+        "tags": [],
+        "content": p.read_text(encoding="utf-8"),
+    }
+    try:
+        summary = ingest_files(
+            [record],
+            vector_store,
+            metadata_store,
+            force_reingest=True,
+            chunker=chunk_uploaded_document,
+            extra_metadata={
+                "upload_id": "u_p3_ingest",
+                "doc_format": "md",
+                "original_filename": "uploaded_table.md",
+            },
+        )
+        assert summary["ingested"] == 1 and summary["failed"] == 0
+        hits = vector_store.query("苹果", source_type="uploaded_doc", top_k=5)
+        assert hits
+        assert hits[0]["metadata"]["upload_id"] == "u_p3_ingest"
+        assert hits[0]["metadata"]["doc_format"] == "md"
+        doc = metadata_store.get_document(record["file_path"])
+        assert doc and doc["source_type"] == "uploaded_doc"
+    finally:
+        vector_store.delete_by_metadata("uploaded_doc", {"file_path": record["file_path"]})
+        metadata_store.delete_document(record["file_path"])
+
+
 def test_ingest_writes_source_url_to_document_and_chunks(stores, tmp_path):
     """完整入库流程把 source_url 同时写进 MySQL documents 与 Chroma chunk metadata。"""
     from app.services.ingest_pipeline import ingest_files
