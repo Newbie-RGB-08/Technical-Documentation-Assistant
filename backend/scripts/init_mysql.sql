@@ -117,3 +117,16 @@ CREATE TABLE IF NOT EXISTS upload_assets (
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_upload_asset_upload (upload_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------------------
+-- 知识源注册表（语言学习资料爬取入库实施方案 步骤 1）
+-- authority: A=官方文档 / B=优质社区教程
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS knowledge_sources (
+    id         BIGINT AUTO_INCREMENT PRIMARY KEY,
+    source_id  VARCHAR(64)  NOT NULL UNIQUE,
+    name       VARCHAR(128) NOT NULL,
+    domains    VARCHAR(512) NOT NULL,
+    authority  ENUM('A', 'B') NOT NULL DEFAULT 'B',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

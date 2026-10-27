@@ -51,6 +51,12 @@ pip-*/
 backend/data/web_cache.db
 backend/data/models/
 
+# Chroma 备份/孤立数据目录
+backend/data/chroma_db.bak_*/
+
+# 工具运行期记忆
+.workbuddy/
+
 # 测试临时文件
 backend/*.sqlite3
 backend/openpyxl.*

@@ -1,6 +1,9 @@
 fastapi>=0.115
 uvicorn[standard]>=0.30
-chromadb>=1.0
+# chromadb 1.x 的 Rust 绑定在本机 Windows 无法打开 sqlite（code 14），
+# 降级到 0.6.3（纯 Python SegmentAPI + chroma-hnswlib 0.7.6a9 win 轮子）恢复持久化
+chromadb==0.6.3
+chroma-hnswlib==0.7.6a9
 sentence-transformers>=3.0
 sqlalchemy>=2.0
 pymysql>=1.1

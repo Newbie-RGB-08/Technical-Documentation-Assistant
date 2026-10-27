@@ -47,7 +47,33 @@ def _patch_chromadb_windows_sqlite_path() -> None:
     rust_bindings.SqliteDBConfig = compat_sqlite_config  # type: ignore[assignment]
 
 
+def _patch_chromadb_sqlite_pragmas() -> None:
+    """chromadb 0.6.x 默认 rollback-journal 模式在本机 Windows 上第二批写入起
+    会抛 sqlite3.OperationalError: unable to open database file（journal 文件
+    创建/切换失败），导致 sysdb 元数据静默丢失。改为 WAL 日志 + 内存临时表规避；
+    连接级 PRAGMA，对非 Windows 或其他版本无副作用。
+    """
+    try:
+        from chromadb.db.impl import sqlite_pool
+    except Exception:  # noqa: BLE001 - 未来版本结构调整时保持静默
+        return
+
+    if getattr(sqlite_pool.Connection.__init__, "_ptdra_pragmas", False):
+        return
+
+    original_init = sqlite_pool.Connection.__init__
+
+    def init_with_pragmas(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA temp_store=MEMORY")
+
+    init_with_pragmas._ptdra_pragmas = True  # type: ignore[attr-defined]
+    sqlite_pool.Connection.__init__ = init_with_pragmas  # type: ignore[assignment]
+
+
 _patch_chromadb_windows_sqlite_path()
+_patch_chromadb_sqlite_pragmas()
 
 _COLLECTIONS = {
     "tech_doc": "tech_docs",
@@ -86,10 +112,12 @@ class ChromaStore(VectorStore):
             raise ValueError(f"未知 source_type: {source_type}")
         client = self._ensure_client()
         assert self._embed_fn is not None
+        # hnsw:sync_threshold=3（合法下限）：chromadb 0.6.x 默认攒 1000 条才落盘
+        # 一次且进程退出不强制刷盘，会造成向量静默丢失；这里改为近似每批持久化。
         return client.get_or_create_collection(
             name=name,
             embedding_function=self._embed_fn,
-            metadata={"hnsw:space": "cosine"},
+            metadata={"hnsw:space": "cosine", "hnsw:sync_threshold": 3},
         )
 
     @staticmethod

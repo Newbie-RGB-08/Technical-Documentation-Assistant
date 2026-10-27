@@ -1,0 +1,5 @@
+# Java 学习资料种子（学习路线 + 核心教程）
+https://roadmap.sh/java
+https://docs.oracle.com/javase/tutorial/
+https://javaguide.cn/
+https://www.runoob.com/java/java-tutorial.html

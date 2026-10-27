@@ -1,0 +1,5 @@
+# Go 学习资料种子（学习路线 + 核心教程）
+https://roadmap.sh/golang
+https://go.dev/doc/tutorial/
+https://golang.google.cn/doc/tutorial/
+https://www.runoob.com/go/go-tutorial.html
